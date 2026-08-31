@@ -1,0 +1,16 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode (when opened as a project)
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Todoist reference screenshots -- copyrighted UI reference material, local-use only, not for
+# a repo other people will clone. Preserved on disk, never committed.
+design-references/
