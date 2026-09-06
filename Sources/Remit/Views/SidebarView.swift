@@ -112,7 +112,41 @@ struct SidebarView: View {
                 emojiTarget = nil
             }
         }
+        // Pinned beneath the list rather than placed inside it. A footer that scrolls away is a
+        // footer nobody finds, and #35 was a real bug where a sticky panel ate the project list's
+        // scroll space -- safeAreaInset reserves its own room instead of overlapping.
+        .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         .navigationSplitViewColumnWidth(min: 200, ideal: 240)
+    }
+
+    // MARK: - Footer
+
+    /// Help and Settings, always reachable from the sidebar itself (#38 asked for the gear here,
+    /// icon-only). Kept deliberately quiet: two permanent controls sitting under the project tree
+    /// should recede until pointed at, which is why there is no framed box around them -- a border
+    /// at this size reads as a stuck button rather than a resting control.
+    private var footer: some View {
+        VStack(spacing: 0) {
+            Divider().overlay(Theme.separator)
+            HStack(spacing: 4) {
+                SidebarFooterButton(
+                    systemImage: "questionmark.circle",
+                    label: "Keyboard Shortcuts",
+                    help: "Keyboard shortcuts (?)"
+                ) { uiState.shortcutsHelpOpen = true }
+
+                Spacer(minLength: 0)
+
+                SidebarFooterButton(
+                    systemImage: "gearshape",
+                    label: nil,
+                    help: "Settings (⌘,)"
+                ) { uiState.settingsOpen = true }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+        }
+        .background(Theme.sidebarBackground)
     }
 
     // MARK: - Rows
@@ -388,5 +422,43 @@ struct SidebarView: View {
             guard !task.isCompleted else { return false }
             return (task.dueDate ?? .distantPast) >= startOfToday || task.isOverdue
         }.count
+    }
+}
+
+/// A sidebar footer control: quiet until hovered, then a soft rounded highlight -- the same
+/// treatment the rows above it get on selection, so the footer belongs to the sidebar rather than
+/// looking bolted beneath it.
+private struct SidebarFooterButton: View {
+    let systemImage: String
+    /// `nil` renders icon-only, which is what #38 asked for on the settings gear.
+    let label: String?
+    let help: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12.5))
+                if let label {
+                    Text(label)
+                        .font(Theme.font(12.5))
+                }
+            }
+            .foregroundStyle(hovering ? Theme.primaryText : Theme.secondaryText)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(hovering ? Theme.separator : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 5))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
