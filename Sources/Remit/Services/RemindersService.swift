@@ -1,3 +1,4 @@
+import AppKit
 import EventKit
 import Foundation
 
@@ -28,6 +29,32 @@ final class RemindersService: ObservableObject {
     @Published private(set) var tasks: [RemitTask] = []
     @Published private(set) var authorizationGranted = false
     @Published var lastError: String?
+    /// Tasks mid-completion: struck through and fading, but not yet written to EventKit. Views read
+    /// this to animate the row out before it disappears (ROADMAP.md #4 -- "no animation... at least
+    /// a completion sound and a little animation").
+    @Published private(set) var completingIDs: Set<String> = []
+    /// The inverse of the last reversible change, replayed by ⌘Z. Only one step deep, matching the
+    /// Glaze build's `undoRef` -- enough to take back a mis-keyed `t` or `1`, which is what the
+    /// shortcut is actually for.
+    @Published private(set) var undoDescription: String?
+    private var undoAction: (() throws -> Void)?
+
+    func recordUndo(_ description: String, _ action: @escaping () throws -> Void) {
+        undoDescription = description
+        undoAction = action
+    }
+
+    func performUndo() {
+        guard let undoAction else { return }
+        self.undoAction = nil
+        undoDescription = nil
+        do {
+            try undoAction()
+            Task { await refreshAll() }
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
 
     private let store = EKEventStore()
     private var changeObserver: NSObjectProtocol?
@@ -92,8 +119,10 @@ final class RemindersService: ObservableObject {
         title: String,
         projectID: String,
         dueDate: Date? = nil,
+        dueTime: DateComponents? = nil,
         priority: Priority = .p4,
-        notes: String? = nil
+        notes: String? = nil,
+        recurrence: QuickAddRecurrence? = nil
     ) throws -> RemitTask {
         guard let calendar = store.calendars(for: .reminder).first(where: { $0.calendarIdentifier == projectID }) else {
             throw RemindersServiceError.projectNotFound
@@ -104,13 +133,78 @@ final class RemindersService: ObservableObject {
         reminder.notes = notes
         reminder.priority = priority.rawValue
         if let dueDate {
-            reminder.dueDateComponents = Calendar.current.dateComponents(
-                [.year, .month, .day, .hour, .minute],
-                from: dueDate
-            )
+            reminder.dueDateComponents = Self.dueComponents(day: dueDate, time: dueTime)
+        }
+        if let recurrence {
+            reminder.addRecurrenceRule(Self.recurrenceRule(from: recurrence))
         }
         try store.save(reminder, commit: true)
         return RemitTask(from: reminder)
+    }
+
+    /// A reminder with `hour`/`minute` present shows a time in Reminders.app; one without shows as
+    /// all-day. Keeping the time optional is what lets "due Tuesday" and "due Tuesday at 5pm" stay
+    /// distinguishable after a round-trip through EventKit.
+    private static func dueComponents(day: Date, time: DateComponents?) -> DateComponents {
+        let calendar = Calendar.current
+        var components = calendar.dateComponents([.year, .month, .day], from: day)
+        if let time {
+            components.hour = time.hour
+            components.minute = time.minute
+        }
+        return components
+    }
+
+    private static func recurrenceRule(from recurrence: QuickAddRecurrence) -> EKRecurrenceRule {
+        let frequency: EKRecurrenceFrequency
+        switch recurrence.frequency {
+        case .daily: frequency = .daily
+        case .weekly: frequency = .weekly
+        case .monthly: frequency = .monthly
+        case .yearly: frequency = .yearly
+        }
+        let days = recurrence.daysOfWeek?.compactMap { index -> EKRecurrenceDayOfWeek? in
+            guard let weekday = EKWeekday(rawValue: index) else { return nil }
+            return EKRecurrenceDayOfWeek(weekday)
+        }
+        return EKRecurrenceRule(
+            recurrenceWith: frequency,
+            interval: max(1, recurrence.interval),
+            daysOfTheWeek: days,
+            daysOfTheMonth: nil,
+            monthsOfTheYear: nil,
+            weeksOfTheYear: nil,
+            daysOfTheYear: nil,
+            setPositions: nil,
+            end: nil
+        )
+    }
+
+    /// Completion with the sound and the brief fade, then the write. Re-opening a completed task
+    /// is immediate -- only the completing direction is worth animating.
+    func completeAnimated(_ task: RemitTask) {
+        guard !task.isCompleted else {
+            try? toggleComplete(task)
+            Task { await refreshAll() }
+            return
+        }
+        guard !completingIDs.contains(task.id) else { return }
+
+        completingIDs.insert(task.id)
+        if UserDefaults.standard.object(forKey: "general.completionSound") as? Bool ?? true {
+            NSSound(named: "Glass")?.play()
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(320))
+            do {
+                try toggleComplete(task)
+            } catch {
+                lastError = error.localizedDescription
+            }
+            completingIDs.remove(task.id)
+            await refreshAll()
+        }
     }
 
     func toggleComplete(_ task: RemitTask) throws {
@@ -130,6 +224,100 @@ final class RemindersService: ObservableObject {
         try store.save(reminder, commit: true)
     }
 
+    func setTitle(_ title: String, for task: RemitTask) throws {
+        guard let reminder = store.calendarItem(withIdentifier: task.id) as? EKReminder else {
+            throw RemindersServiceError.taskNotFound
+        }
+        reminder.title = title
+        try store.save(reminder, commit: true)
+    }
+
+    func setNotes(_ notes: String?, for task: RemitTask) throws {
+        guard let reminder = store.calendarItem(withIdentifier: task.id) as? EKReminder else {
+            throw RemindersServiceError.taskNotFound
+        }
+        reminder.notes = notes
+        try store.save(reminder, commit: true)
+    }
+
+    /// Moves a reminder to another list. EventKit reassigns the calendar in place, so the
+    /// identifier survives and Remit-layer metadata keyed to it stays attached.
+    func moveTask(_ task: RemitTask, toProject projectID: String) throws {
+        guard let reminder = store.calendarItem(withIdentifier: task.id) as? EKReminder else {
+            throw RemindersServiceError.taskNotFound
+        }
+        guard let calendar = store.calendars(for: .reminder)
+            .first(where: { $0.calendarIdentifier == projectID }) else {
+            throw RemindersServiceError.projectNotFound
+        }
+        reminder.calendar = calendar
+        try store.save(reminder, commit: true)
+    }
+
+    /// Sets the due date, with `allDay` deciding whether a time component is written at all --
+    /// that flag is the only thing distinguishing "due Tuesday" from "due Tuesday at 09:00" once
+    /// the value round-trips through EventKit.
+    func setDueDate(_ date: Date?, allDay: Bool, for task: RemitTask) throws {
+        guard let reminder = store.calendarItem(withIdentifier: task.id) as? EKReminder else {
+            throw RemindersServiceError.taskNotFound
+        }
+        if let date {
+            let fields: Set<Calendar.Component> = allDay
+                ? [.year, .month, .day]
+                : [.year, .month, .day, .hour, .minute]
+            reminder.dueDateComponents = Calendar.current.dateComponents(fields, from: date)
+        } else {
+            reminder.dueDateComponents = nil
+        }
+        try store.save(reminder, commit: true)
+    }
+
+    /// Replaces every recurrence rule, or clears them when passed nil.
+    func setRecurrence(_ recurrence: QuickAddRecurrence?, for task: RemitTask) throws {
+        guard let reminder = store.calendarItem(withIdentifier: task.id) as? EKReminder else {
+            throw RemindersServiceError.taskNotFound
+        }
+        for rule in reminder.recurrenceRules ?? [] {
+            reminder.removeRecurrenceRule(rule)
+        }
+        if let recurrence {
+            reminder.addRecurrenceRule(Self.recurrenceRule(from: recurrence))
+        }
+        try store.save(reminder, commit: true)
+    }
+
+    func setLocation(_ title: String?, for task: RemitTask) throws {
+        guard let reminder = store.calendarItem(withIdentifier: task.id) as? EKReminder else {
+            throw RemindersServiceError.taskNotFound
+        }
+        // EKReminder has a plain `location` string; `structuredLocation` is EKEvent-only.
+        reminder.location = (title?.isEmpty == false) ? title : nil
+        try store.save(reminder, commit: true)
+    }
+
+    /// The task's current repeat, mapped back into the same shape quick add produces.
+    func recurrence(for task: RemitTask) -> QuickAddRecurrence? {
+        guard let reminder = store.calendarItem(withIdentifier: task.id) as? EKReminder,
+              let rule = reminder.recurrenceRules?.first else { return nil }
+        let frequency: QuickAddRecurrence.Frequency
+        switch rule.frequency {
+        case .daily: frequency = .daily
+        case .weekly: frequency = .weekly
+        case .monthly: frequency = .monthly
+        case .yearly: frequency = .yearly
+        @unknown default: frequency = .weekly
+        }
+        return QuickAddRecurrence(
+            frequency: frequency,
+            interval: rule.interval,
+            daysOfWeek: rule.daysOfTheWeek?.map { $0.dayOfTheWeek.rawValue }
+        )
+    }
+
+    func location(for task: RemitTask) -> String? {
+        (store.calendarItem(withIdentifier: task.id) as? EKReminder)?.location
+    }
+
     func setDueDate(_ date: Date?, for task: RemitTask) throws {
         guard let reminder = store.calendarItem(withIdentifier: task.id) as? EKReminder else {
             throw RemindersServiceError.taskNotFound
@@ -145,6 +333,17 @@ final class RemindersService: ObservableObject {
         try store.save(reminder, commit: true)
     }
 
+    /// Removes the Reminders list itself, and every reminder in it -- this is not a Remit-only
+    /// hide (ROADMAP.md #34 asked for exactly that). Callers must confirm first; there is no undo,
+    /// and the deletion syncs to iCloud like any other Reminders change.
+    func deleteProject(_ projectID: String) throws {
+        guard let calendar = store.calendars(for: .reminder)
+            .first(where: { $0.calendarIdentifier == projectID }) else {
+            throw RemindersServiceError.projectNotFound
+        }
+        try store.removeCalendar(calendar, commit: true)
+    }
+
     func delete(_ task: RemitTask) throws {
         guard let reminder = store.calendarItem(withIdentifier: task.id) as? EKReminder else {
             throw RemindersServiceError.taskNotFound
@@ -154,6 +353,37 @@ final class RemindersService: ObservableObject {
 }
 
 // MARK: - Date bucketing (single source of truth -- see class doc comment)
+
+/// The dates the `T` / `U` / `W` / `N` scheduling shortcuts and the quick-add default resolve to.
+/// Defined here, next to `isDueToday`/`isOverdue`, so every "what day does this mean" answer in
+/// the app comes from one file -- see the class doc comment and ROADMAP.md "Known traps".
+enum ScheduleTarget {
+    case today
+    case tomorrow
+    /// The coming Saturday. Today counts when it's already the weekend, matching Todoist.
+    case weekend
+    case nextWeek
+    case none
+
+    var date: Date? {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        switch self {
+        case .today:
+            return today
+        case .tomorrow:
+            return calendar.date(byAdding: .day, value: 1, to: today)
+        case .weekend:
+            let weekday = calendar.component(.weekday, from: today)
+            let daysUntilSaturday = (7 - weekday + 7) % 7
+            return calendar.date(byAdding: .day, value: daysUntilSaturday, to: today)
+        case .nextWeek:
+            return calendar.date(byAdding: .day, value: 7, to: today)
+        case .none:
+            return nil
+        }
+    }
+}
 
 extension RemitTask {
     var isOverdue: Bool {

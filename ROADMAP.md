@@ -90,8 +90,14 @@ only the implementation (native SwiftUI instead of Electron/Glaze).
 
 ## P1 — Labels & filters
 
-- [ ] Labels = Apple Reminders' native tags, not a separate Remit-only concept (#27, #32 — check
-      what tags actually exist on the user's real reminders before assuming a schema)
+- [x] Labels are a **Remit-only** concept, stored in MetadataStore alongside sections and project
+      nesting. This supersedes the original #27/#32 plan of mapping them to Apple Tags, which was
+      tested on 2026-08-31 and is not possible: `EKReminder` exposes no tags property and is not
+      even KVC-compliant for the key, the Reminders AppleScript dictionary has no tag property,
+      and a reminder created via EventKit with "#bills" in its title stays plain text in
+      Reminders.app rather than being promoted to a tag. Apple ships no public API for Reminders
+      tags on any surface. Consequence: labels do not sync to iPhone and are invisible in
+      Reminders.app. Do not re-attempt this.
 - [ ] Filters are built from scratch in Remit (Reminders has no native filter concept) (#27)
 - [ ] Group-by-Label option in view options (#70)
 - [ ] Label picker/list is legible — the Electron build shipped a label section the user

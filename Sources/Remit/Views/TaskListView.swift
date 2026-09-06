@@ -1,42 +1,323 @@
+import AppKit
 import SwiftUI
 
-/// Filters `remindersService.tasks` for the current sidebar selection and renders it as a plain
-/// list with quick add and arrow-key navigation.
+/// Filters `remindersService.tasks` for the current sidebar selection and renders it grouped into
+/// sections, each ending with its own inline "Add task" row.
 ///
 /// The Electron build's Today/Upcoming counts drifted from Reminders.app's own counts twice
-/// (ROADMAP.md "Known traps") and its arrow-key navigation skipped items twice. Both live here
-/// in one place on purpose: `filteredTasks` is the only date-bucketing logic in the app, and
-/// `moveSelection` always walks `filteredTasks` itself rather than a separately-maintained index,
-/// so a selection can't point at a row the current filter no longer contains.
+/// (ROADMAP.md "Known traps") and its arrow-key navigation skipped items twice. Both are handled
+/// in one place on purpose: `visibleTasks` is the only place tasks are selected for this view, and
+/// `moveSelection` walks `orderedTasks` -- the flattened rendered order -- rather than a
+/// separately-maintained index, so a selection can never point at a row the filter no longer shows.
 struct TaskListView: View {
     let selection: SidebarSelection
+    /// Lets the ⌘K palette move the sidebar selection, which this view doesn't own.
+    var onNavigate: ((SidebarSelection) -> Void)?
 
     @EnvironmentObject private var remindersService: RemindersService
+    @EnvironmentObject private var metadataStore: MetadataStore
     @State private var quickAddText = ""
-    @FocusState private var quickAddFocused: Bool
+    @State private var activeAddSection: String?
+    @State private var newSectionName = ""
+    @State private var addingSection = false
+    @State private var renamingSection: TaskSection?
+
+    @State private var labelSheetTask: RemitTask?
+    @State private var peekTask: RemitTask?
     @State private var selectedTaskID: String?
+    @FocusState private var focus: RemitFocusTarget?
+    @StateObject private var keyMonitor = KeyMonitor()
+    @EnvironmentObject private var displayPrefs: DisplayPrefsStore
+    @EnvironmentObject private var uiState: UIState
 
     var body: some View {
         VStack(spacing: 0) {
-            List(selection: $selectedTaskID) {
-                ForEach(filteredTasks) { task in
-                    TaskRowView(task: task)
-                        .tag(task.id)
+            switch layout {
+            case .list:
+                listLayout
+            case .board:
+                BoardView(
+                    sections: sections,
+                    showsProject: showsProjectColumn,
+                    selectedTaskID: $selectedTaskID,
+                    onAddSection: boardSectionAdder
+                ) { task, section in
+                    move(task, to: section)
+                }
+            case .calendar:
+                CalendarView(
+                    tasks: visibleTasks,
+                    selectedTaskID: $selectedTaskID,
+                    range: binding(\.calendarRange)
+                ) { task, date in
+                    perform { try remindersService.setDueDate(date, for: task) }
                 }
             }
-            .listStyle(.plain)
-            .onMoveCommand(perform: moveSelection)
 
-            QuickAddView(text: $quickAddText, isFocused: $quickAddFocused, onSubmit: submitQuickAdd)
+            if let error = remindersService.lastError {
+                ErrorBanner(message: error) { remindersService.lastError = nil }
+            }
         }
         .navigationTitle(title)
+        .navigationSubtitle(subtitle)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                DisplayMenu(
+                    layout: binding(\.layout),
+                    groupBy: binding(\.groupBy),
+                    sorting: binding(\.sorting),
+                    showsCompleted: binding(\.showsCompleted),
+                    deadline: binding(\.deadline),
+                    priorityFilter: binding(\.priorityFilter),
+                    labelFilter: binding(\.labelFilter),
+                    labels: metadataStore.labels,
+                    onReset: resetDisplay,
+                    onSaveFilter: saveCurrentAsFilter
+                )
+            }
+        }
         .task(id: selection) {
             await remindersService.refreshAll()
         }
+        .onAppear {
+            RemitLog.debug("install monitor for \(selection.displayKey)")
+            keyMonitor.install(handleEvent)
+        }
+        .onDisappear { keyMonitor.remove() }
     }
 
-    private var filteredTasks: [RemitTask] {
-        let openTasks = remindersService.tasks.filter { !$0.isCompleted }
+    /// Only a project view has sections, and only when the Display menu isn't overriding the
+    /// grouping -- adding a section while grouped by priority would create something invisible.
+    private var boardSectionAdder: ((String) -> Void)? {
+        guard case .project(let projectID) = selection, groupBy == .default else { return nil }
+        return { name in metadataStore.addSection(name: name, toProject: projectID) }
+    }
+
+    /// This view's own settings. Keyed by `selection`, so each project, label, and fixed view
+    /// keeps its own layout, grouping, sorting, and filters.
+    private var prefs: DisplayPreferences {
+        displayPrefs.preferences(for: selection.displayKey)
+    }
+
+    private var layout: TaskLayout { prefs.layout }
+    private var sorting: TaskSorting { prefs.sorting }
+    private var groupBy: TaskGroupBy { prefs.groupBy }
+    private var deadline: DeadlineFilter { prefs.deadline }
+    private var showsCompleted: Bool { prefs.showsCompleted }
+    private var priorityFilter: String { prefs.priorityFilter }
+    private var labelFilter: String { prefs.labelFilter }
+
+    private func binding<V>(_ keyPath: WritableKeyPath<DisplayPreferences, V>) -> Binding<V> {
+        Binding(
+            get: { prefs[keyPath: keyPath] },
+            set: { newValue in
+                var updated = prefs
+                updated[keyPath: keyPath] = newValue
+                displayPrefs.set(updated, for: selection.displayKey)
+            }
+        )
+    }
+
+    /// Turns the popover's current criteria into a named sidebar filter. Reminders has no filter
+    /// concept, so these are entirely Remit's (#27).
+    private func saveCurrentAsFilter(_ name: String) {
+        var projectID: String?
+        if case .project(let id) = selection { projectID = id }
+        metadataStore.addFilter(
+            SavedFilter(
+                id: UUID().uuidString,
+                name: name,
+                deadline: deadline,
+                priority: priorityFilter,
+                labelID: labelFilter,
+                projectID: projectID
+            )
+        )
+    }
+
+    private func resetDisplay() {
+        displayPrefs.reset(selection.displayKey)
+    }
+
+    /// Dropping a card on a board column means "belong to this group": for a project that's a
+    /// section change, for a date-based view it's a reschedule.
+    private func move(_ task: RemitTask, to section: TaskGrouping.Section) {
+        if section.isSectionBucket {
+            metadataStore.setSection(section.sectionID, forTask: task.id)
+        } else if let date = section.date {
+            perform { try remindersService.setDueDate(date, for: task) }
+        }
+    }
+
+    private var listLayout: some View {
+        VStack(spacing: 0) {
+            List(selection: $selectedTaskID) {
+                ForEach(sections) { section in
+                    if let gap = section.gapLabel {
+                        Text(gap)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                            .listRowSeparator(.hidden)
+                    }
+
+                    SwiftUI.Section {
+                        ForEach(section.tasks) { task in
+                            TaskRowView(task: task, showsProject: showsProjectColumn)
+                                .tag(task.id)
+                                .contextMenu { taskMenu(task) }
+                                .onTapGesture(count: 2) { peekTask = task }
+                        }
+                        // Reordering only makes sense against a manual order; under any computed
+                        // sort the row would snap straight back, which reads as a broken drag.
+                        .onMove { source, destination in
+                            moveTasks(in: section, from: source, to: destination)
+                        }
+
+                        // Overdue never takes new tasks -- adding "to Overdue" has no meaning.
+                        if !section.isOverdue {
+                            addRow(for: section)
+                        }
+                    } header: {
+                        Text(section.title)
+                            .font(Theme.sectionHeader)
+                            .contextMenu { sectionMenu(section) }
+                    }
+                }
+
+                if case .project = selection {
+                    addSectionRow
+                }
+            }
+            .listStyle(.plain)
+        }
+    }
+
+    /// Collapsed to a plain "Add task" affordance until clicked, so a long Upcoming list isn't a
+    /// column of identical text fields.
+    @ViewBuilder
+    private func addRow(for section: TaskGrouping.Section) -> some View {
+        if activeAddSection == section.id {
+            QuickAddView(
+                text: $quickAddText,
+                isFocused: $focus,
+                focusValue: .quickAdd,
+                projects: remindersService.projects,
+                labels: metadataStore.labels,
+                onSubmit: { submitQuickAdd(into: section) }
+            )
+            .listRowSeparator(.hidden)
+        } else {
+            Button {
+                activeAddSection = section.id
+                focus = .quickAdd
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus")
+                        .foregroundStyle(.secondary)
+                    Text("Add task")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .listRowSeparator(.hidden)
+        }
+    }
+
+    /// Sections are Remit-only, so they need their own creation affordance -- there is nothing in
+    /// Reminders.app that would ever create one.
+    @ViewBuilder
+    private var addSectionRow: some View {
+        if addingSection {
+            HStack(spacing: 8) {
+                Image(systemName: "square.split.1x2")
+                    .foregroundStyle(.secondary)
+                TextField("Section name", text: $newSectionName)
+                    .textFieldStyle(.plain)
+                    .onSubmit(commitSection)
+                    .onExitCommand { cancelSection() }
+            }
+            .padding(.vertical, 4)
+            .listRowSeparator(.hidden)
+        } else {
+            Button {
+                addingSection = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus.square.dashed")
+                    Text("Add section")
+                    Spacer()
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .listRowSeparator(.hidden)
+        }
+    }
+
+    @ViewBuilder
+    private func sectionMenu(_ section: TaskGrouping.Section) -> some View {
+        if let sectionID = section.sectionID,
+           let model = projectSections.first(where: { $0.id == sectionID }) {
+            Button("Move Section Up") { metadataStore.moveSection(sectionID, by: -1) }
+            Button("Move Section Down") { metadataStore.moveSection(sectionID, by: 1) }
+            Divider()
+            Button("Rename Section") {
+                renamingSection = model
+                newSectionName = model.name
+                addingSection = true
+            }
+            // Deleting a section returns its tasks to the unsectioned bucket; it never deletes
+            // the tasks themselves, which live in Reminders.
+            Button("Delete Section", role: .destructive) {
+                metadataStore.removeSection(sectionID)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func taskMenu(_ task: RemitTask) -> some View {
+        if case .project = selection, !projectSections.isEmpty {
+            Menu("Move to Section") {
+                Button("(No section)") { metadataStore.setSection(nil, forTask: task.id) }
+                Divider()
+                ForEach(projectSections) { section in
+                    Button(section.name) { metadataStore.setSection(section.id, forTask: task.id) }
+                }
+            }
+        }
+        Button("Delete Task", role: .destructive) {
+            perform { try remindersService.delete(task) }
+        }
+    }
+
+    private func commitSection() {
+        guard case .project(let projectID) = selection else { return }
+        let name = newSectionName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return cancelSection() }
+
+        if let renamingSection {
+            metadataStore.renameSection(renamingSection.id, to: name)
+        } else {
+            metadataStore.addSection(name: name, toProject: projectID)
+        }
+        cancelSection()
+    }
+
+    private func cancelSection() {
+        addingSection = false
+        renamingSection = nil
+        newSectionName = ""
+    }
+
+    // MARK: - Data
+
+    private var visibleTasks: [RemitTask] {
+        let openTasks = remindersService.tasks
+            .filter { showsCompleted || !$0.isCompleted }
+            .filter(passesFilters)
         switch selection {
         case .inbox:
             let defaultID = remindersService.defaultProjectID
@@ -45,12 +326,109 @@ struct TaskListView: View {
             return openTasks.filter { $0.isDueToday || $0.isOverdue }
         case .upcoming:
             let startOfToday = Calendar.current.startOfDay(for: Date())
-            return openTasks
-                .filter { ($0.dueDate ?? .distantPast) >= startOfToday }
-                .sorted { ($0.dueDate ?? .distantFuture) < ($1.dueDate ?? .distantFuture) }
+            return openTasks.filter { ($0.dueDate ?? .distantPast) >= startOfToday || $0.isOverdue }
+        case .label(let labelID):
+            return openTasks.filter { task in
+                metadataStore.labels(forTask: task.id).contains { $0.id == labelID }
+            }
+        case .filter(let filterID):
+            guard let filter = metadataStore.filters.first(where: { $0.id == filterID }) else { return [] }
+            return openTasks.filter {
+                filter.matches($0, labelIDs: metadataStore.labels(forTask: $0.id).map(\.id))
+            }
+        case .filtersAndLabels:
+            return []
         case .project(let id):
             return openTasks.filter { $0.projectID == id }
         }
+    }
+
+    /// Hides tasks whose due *time* falls inside the configured sleeping window (#10, default
+    /// 10PM-8AM). Only tasks with an explicit time are affected -- an all-day task has no time to
+    /// judge, and hiding those would make tasks disappear for no visible reason.
+    private func passesSleepingHours(_ task: RemitTask) -> Bool {
+        guard UserDefaults.standard.bool(forKey: "general.hideSleepingHours"),
+              task.hasDueTime, let due = task.dueDate else { return true }
+
+        let defaults = UserDefaults.standard
+        let start = defaults.object(forKey: "general.sleepStartHour") as? Int ?? 22
+        let end = defaults.object(forKey: "general.sleepEndHour") as? Int ?? 8
+        let hour = Calendar.current.component(.hour, from: due)
+
+        // The window normally wraps midnight (22 -> 8); handle both orientations.
+        let asleep = start <= end ? (hour >= start && hour < end) : (hour >= start || hour < end)
+        return !asleep
+    }
+
+    /// Display-menu filters, applied on top of the view's own selection.
+    private func passesFilters(_ task: RemitTask) -> Bool {
+        guard passesSleepingHours(task) else { return false }
+        guard deadline.matches(task) else { return false }
+        if priorityFilter != "all", String(task.priority.rawValue) != priorityFilter { return false }
+        if labelFilter != "all" {
+            guard metadataStore.labels(forTask: task.id).contains(where: { $0.id == labelFilter }) else {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// Applies the chosen sort, with Manual resolved here because it needs the metadata store.
+    private func applySort(_ tasks: [RemitTask]) -> [RemitTask] {
+        guard sorting == .manual else { return sorting.apply(tasks) }
+        return tasks.sorted { metadataStore.sortOrder(forTask: $0.id) < metadataStore.sortOrder(forTask: $1.id) }
+    }
+
+    private var sections: [TaskGrouping.Section] {
+        if groupBy != .default {
+            return TaskGrouping.grouped(
+                applySort(visibleTasks),
+                by: groupBy,
+                projects: remindersService.projects,
+                labelsFor: { metadataStore.labels(forTask: $0.id) },
+                untitled: title
+            )
+        }
+        switch selection {
+        case .today:
+            return TaskGrouping.today(visibleTasks)
+        case .upcoming:
+            return TaskGrouping.upcoming(visibleTasks)
+        case .project(let id):
+            return TaskGrouping.project(
+                visibleTasks,
+                sections: metadataStore.sections(forProject: id),
+                assignments: sectionAssignments,
+                untitled: title
+            )
+        case .inbox, .label, .filter, .filtersAndLabels:
+            return [
+                TaskGrouping.Section(
+                    id: "all",
+                    title: title,
+                    tasks: applySort(visibleTasks)
+                )
+            ]
+        }
+    }
+
+    private var sectionAssignments: [String: String] {
+        var result: [String: String] = [:]
+        for (taskID, meta) in metadataStore.data.tasks {
+            if let sectionID = meta.sectionID { result[taskID] = sectionID }
+        }
+        return result
+    }
+
+    private var projectSections: [TaskSection] {
+        guard case .project(let id) = selection else { return [] }
+        return metadataStore.sections(forProject: id)
+    }
+
+    /// The rendered order, flattened. Keyboard navigation walks this so `j` crosses section
+    /// boundaries the way the eye does.
+    private var orderedTasks: [RemitTask] {
+        sections.flatMap(\.tasks)
     }
 
     private var title: String {
@@ -58,39 +436,198 @@ struct TaskListView: View {
         case .inbox: return "Inbox"
         case .today: return "Today"
         case .upcoming: return "Upcoming"
+        case .filtersAndLabels: return "Filters & Labels"
+        case .label(let id):
+            return metadataStore.labels.first(where: { $0.id == id })?.name ?? "Label"
+        case .filter(let id):
+            return metadataStore.filters.first(where: { $0.id == id })?.name ?? "Filter"
         case .project(let id):
             return remindersService.projects.first(where: { $0.id == id })?.title ?? "Project"
         }
     }
 
-    private func submitQuickAdd() {
-        let trimmed = quickAddText.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Date-based views mix projects, so each row names its own. A project view doesn't.
+    private var showsProjectColumn: Bool {
+        switch selection {
+        case .today, .upcoming, .label, .filter: return true
+        case .inbox, .project, .filtersAndLabels: return false
+        }
+    }
+
+    private var subtitle: String {
+        let count = orderedTasks.count
+        return count == 1 ? "1 task" : "\(count) tasks"
+    }
+
+    // MARK: - Quick add
+
+    /// The due date a task gets when the typed text names no date of its own -- the section it was
+    /// added under. Without this, adding from Today created an undated reminder that immediately
+    /// failed this view's own filter and appeared to vanish.
+    private func defaultDueDate(for section: TaskGrouping.Section) -> Date? {
+        if let date = section.date { return date }
+        switch selection {
+        case .today, .upcoming: return ScheduleTarget.today.date
+        case .inbox, .project, .label, .filter, .filtersAndLabels: return nil
+        }
+    }
+
+    private func submitQuickAdd(into section: TaskGrouping.Section) {
+        let parsed = QuickAddParser.parse(
+            quickAddText,
+            projects: remindersService.projects,
+            labels: metadataStore.labels.map(\.name)
+        )
+        let trimmed = parsed.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        let targetProjectID: String
-        if case .project(let id) = selection {
-            targetProjectID = id
-        } else {
-            targetProjectID = remindersService.defaultProjectID ?? remindersService.projects.first?.id ?? ""
-        }
-
-        guard !targetProjectID.isEmpty else {
+        guard let targetProjectID = resolveProjectID(parsed.projectID) else {
             remindersService.lastError = "No project available to add this task to."
             return
         }
 
         do {
-            try remindersService.createTask(title: trimmed, projectID: targetProjectID)
+            let task = try remindersService.createTask(
+                title: trimmed,
+                projectID: targetProjectID,
+                dueDate: parsed.dueDate ?? defaultDueDate(for: section),
+                dueTime: parsed.dueTime,
+                priority: parsed.priority ?? .p4,
+                recurrence: parsed.recurrence
+            )
+            applyLabels(parsed, toTask: task.id)
+            if section.isSectionBucket {
+                metadataStore.setSection(section.sectionID, forTask: task.id)
+            }
             quickAddText = ""
+            // Focus stays in the field so several tasks can be typed in a row.
             Task { await remindersService.refreshAll() }
         } catch {
             remindersService.lastError = error.localizedDescription
         }
     }
 
+    /// An `@token` naming a label that doesn't exist yet creates it, rather than being dropped.
+    /// The Glaze build discards unknown tokens, but it has a label-management UI to create them in
+    /// first and this build does not yet -- without this, every `@token` would silently do nothing.
+    private func applyLabels(_ parsed: QuickAddResult, toTask taskID: String) {
+        var ids = parsed.labelNames.compactMap { metadataStore.label(named: $0)?.id }
+        for name in parsed.newLabelNames {
+            if let created = metadataStore.addLabel(name: name) { ids.append(created.id) }
+        }
+        guard !ids.isEmpty else { return }
+        metadataStore.setLabels(ids, forTask: taskID)
+    }
+
+    /// An explicit `#project` token wins; otherwise a project view adds to itself, and the
+    /// date-based views fall back to the Reminders default list.
+    private func resolveProjectID(_ parsed: String?) -> String? {
+        if let parsed { return parsed }
+        if case .project(let id) = selection { return id }
+        let fallback = remindersService.defaultProjectID ?? remindersService.projects.first?.id
+        return fallback?.isEmpty == false ? fallback : nil
+    }
+
+    // MARK: - Keyboard
+
+    /// Bindings match the Glaze build's defaults in `renderer/lib/shortcut-config.ts` so muscle
+    /// memory carries over. Remapping (Settings -> Shortcuts) is still unbuilt -- see ROADMAP.md.
+    ///
+    /// Returns true when the key was consumed. Anything typed into an add field is left alone, so
+    /// shortcuts can be plain letters without eating task titles.
+    private func handleEvent(_ event: NSEvent) -> Bool {
+        RemitLog.debug("key code=\(event.keyCode) chars=\(event.charactersIgnoringModifiers ?? "") editing=\(KeyMonitor.isEditingText) responder=\(String(describing: NSApp.keyWindow?.firstResponder))")
+        guard !KeyMonitor.isEditingText else { return false }
+
+        // macOS sets .function and .numericPad on arrow keys. Leaving them in the comparison
+        // below made every arrow fail the "no modifiers" guard and fall through unhandled -- in
+        // List view AppKit's table then moved the selection itself, which masked the bug until
+        // Board (which has no table) showed arrows doing nothing at all.
+        let modifiers = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.function, .numericPad])
+        if modifiers.contains(.command) {
+            // ⌘K and ⌘Z are menu items now -- AppKit resolves those before this monitor runs.
+            guard event.keyCode == 51 else { return false }   // Delete
+            deleteSelected()
+            return true
+        }
+        guard modifiers.isEmpty || modifiers == .shift else { return false }
+
+        switch event.keyCode {
+        case 125: moveSelection(.down); return true           // Down arrow
+        case 126: moveSelection(.up); return true             // Up arrow
+        case 123: moveColumn(-1); return true                 // Left arrow
+        case 124: moveColumn(1); return true                  // Right arrow
+        case 36:                                              // Return
+            peekTask = ensureSelection()
+            return true
+        default: break
+        }
+
+        switch event.charactersIgnoringModifiers {
+        case "j": moveSelection(.down)
+        case "k": moveSelection(.up)
+        case "e": completeSelected()
+        case "1": applyPriority(.p1)
+        case "2": applyPriority(.p2)
+        case "3": applyPriority(.p3)
+        case "4": applyPriority(.p4)
+        case "t": schedule(.today)
+        case "u", "m": schedule(.tomorrow)
+        case "w": schedule(.weekend)
+        case "n": schedule(.nextWeek)
+        case "0", "T": schedule(.none)
+        case "q", "a": openFirstAddRow()
+        case "l": labelSheetTask = ensureSelection()
+        case "i": peekTask = ensureSelection()
+        case "/": uiState.paletteOpen = true
+        case "?": uiState.shortcutsHelpOpen = true
+        default: return false
+        }
+        return true
+    }
+
+    private var selectedTask: RemitTask? {
+        guard let selectedTaskID else { return nil }
+        return orderedTasks.first { $0.id == selectedTaskID }
+    }
+
+    /// Shortcuts that act on "the current task" need one selected. Falling back to the first row
+    /// means pressing `e` or `t` on a freshly-opened list does the obvious thing instead of
+    /// silently no-op'ing.
+    @discardableResult
+    private func ensureSelection() -> RemitTask? {
+        if let selectedTask { return selectedTask }
+        selectedTaskID = orderedTasks.first?.id
+        return selectedTask
+    }
+
+    private func moveTasks(in section: TaskGrouping.Section, from source: IndexSet, to destination: Int) {
+        guard sorting == .manual else {
+            remindersService.lastError = "Switch Sorting to \"Manual\" in the Display menu to reorder tasks by hand."
+            return
+        }
+        var ordered = section.tasks
+        ordered.move(fromOffsets: source, toOffset: destination)
+        metadataStore.setTaskOrder(ordered.map(\.id))
+    }
+
+    private func openFirstAddRow() {
+        activeAddSection = sections.first { !$0.isOverdue }?.id
+        focus = .quickAdd
+    }
+
+    /// Vertical movement. In List and Calendar this walks the flattened rendered order, so `j`
+    /// crosses a section boundary the way the eye does. In Board it stays inside the current
+    /// column -- a board's columns are parallel, not one continuous list, so falling from the
+    /// bottom of one column into the top of the next reads as a bug.
     private func moveSelection(_ direction: MoveCommandDirection) {
-        let tasks = filteredTasks
-        guard !tasks.isEmpty else { return }
+        let tasks = layout == .board ? currentColumn?.tasks ?? [] : orderedTasks
+        guard !tasks.isEmpty else {
+            selectedTaskID = orderedTasks.first?.id
+            return
+        }
 
         guard let currentID = selectedTaskID,
               let currentIndex = tasks.firstIndex(where: { $0.id == currentID }) else {
@@ -106,11 +643,88 @@ struct TaskListView: View {
             }
         case .up:
             if currentIndex > tasks.startIndex {
-                let previousIndex = tasks.index(before: currentIndex)
-                selectedTaskID = tasks[previousIndex].id
+                selectedTaskID = tasks[tasks.index(before: currentIndex)].id
             }
         default:
             break
+        }
+    }
+
+    /// The section whose column currently holds the selection.
+    private var currentColumn: TaskGrouping.Section? {
+        guard let selectedTaskID else { return sections.first { !$0.tasks.isEmpty } }
+        return sections.first { $0.tasks.contains { $0.id == selectedTaskID } }
+    }
+
+    /// Left/right across board columns, keeping roughly the same row so the selection tracks
+    /// horizontally instead of jumping to the top of every column. Empty columns are skipped --
+    /// stopping on one would strand the selection with nothing to select.
+    private func moveColumn(_ delta: Int) {
+        guard layout == .board else { return }
+        let populated = sections.enumerated().filter { !$0.element.tasks.isEmpty }
+        guard !populated.isEmpty else { return }
+
+        guard let selectedTaskID,
+              let currentPosition = populated.firstIndex(where: { section in
+                  section.element.tasks.contains { $0.id == selectedTaskID }
+              }) else {
+            self.selectedTaskID = populated.first?.element.tasks.first?.id
+            return
+        }
+
+        let row = populated[currentPosition].element.tasks
+            .firstIndex { $0.id == selectedTaskID } ?? 0
+        let target = currentPosition + delta
+        guard target >= 0, target < populated.count else { return }
+
+        let column = populated[target].element.tasks
+        self.selectedTaskID = column[min(row, column.count - 1)].id
+    }
+
+    /// Completing removes the row from every view that filters on `!isCompleted`, so the selection
+    /// moves to the next task first -- otherwise it would point at a row that no longer exists and
+    /// the next `j` would jump back to the top of the list.
+    private func completeSelected() {
+        guard let task = ensureSelection() else { return }
+        let tasks = orderedTasks
+        let successorID = tasks.firstIndex(where: { $0.id == task.id })
+            .map { tasks.index(after: $0) }
+            .flatMap { $0 < tasks.count ? tasks[$0].id : tasks.last(where: { $0.id != task.id })?.id }
+
+        remindersService.completeAnimated(task)
+        selectedTaskID = successorID
+    }
+
+    private func applyPriority(_ priority: Priority) {
+        guard let task = ensureSelection() else { return }
+        let previous = task.priority
+        remindersService.recordUndo("priority") {
+            try remindersService.setPriority(previous, for: task)
+        }
+        perform { try remindersService.setPriority(priority, for: task) }
+    }
+
+    private func schedule(_ target: ScheduleTarget) {
+        guard let task = ensureSelection() else { return }
+        let previous = task.dueDate
+        remindersService.recordUndo("schedule") {
+            try remindersService.setDueDate(previous, for: task)
+        }
+        perform { try remindersService.setDueDate(target.date, for: task) }
+    }
+
+    private func deleteSelected() {
+        guard let task = ensureSelection() else { return }
+        perform { try remindersService.delete(task) }
+        selectedTaskID = nil
+    }
+
+    private func perform(_ action: () throws -> Void) {
+        do {
+            try action()
+            Task { await remindersService.refreshAll() }
+        } catch {
+            remindersService.lastError = error.localizedDescription
         }
     }
 }
