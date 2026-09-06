@@ -14,3 +14,6 @@ DerivedData/
 # Todoist reference screenshots -- copyrighted UI reference material, local-use only, not for
 # a repo other people will clone. Preserved on disk, never committed.
 design-references/
+
+# Release artifacts -- rebuilt by ./release.sh and published by CI, never committed.
+dist/

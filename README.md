@@ -7,27 +7,25 @@ service, no lock-in. Anything you do in Remit shows up in Reminders on your iPho
 versa. What Remit adds is the interface: views, sections, labels, filters, and a full
 keyboard-driven workflow.
 
-## Status: v0.1 scaffold
+## Status: v0.2, running
 
-This is the first slice of a ground-up SwiftUI rewrite, replacing an earlier version built on
-Raycast's Glaze/Electron toolchain (see `ROADMAP.md` for the full feature backlog carried over
-from that build's 79 rounds of iteration). This scaffold has **not been compiled or run** --
-it was written without access to Xcode or a Swift toolchain, so treat the first build in Xcode
-as the real integration test. Open an issue-shaped note (or just tell me directly) about
-whatever the compiler flags first.
+A ground-up SwiftUI rewrite, replacing an earlier version built on Raycast's Glaze/Electron
+toolchain (see `ROADMAP.md` for the full feature backlog carried over from that build's 79
+rounds of iteration). It builds, runs, and is packaged as a DMG.
 
-What works in this slice:
-- EventKit access request + live reminders/lists fetch (`RemindersService`)
-- Reminders lists shown as projects in a sidebar; Inbox / Today / Upcoming smart views
-- Quick add (plain text -> new reminder, no NLP parsing yet)
-- Complete/uncomplete a task, arrow-key navigation between tasks
-- A local metadata sidecar (`MetadataStore`) for the Remit-only concepts EventKit can't hold
-  (sections, project emoji/color, favorites) -- present as a data layer, not yet wired into any
-  view
+What works:
+- EventKit read/write: Reminders lists as projects, reminders as tasks, live refresh
+- Inbox / Today / Upcoming smart views, plus per-project views
+- Three layouts everywhere -- List, Board (kanban), Calendar (day/3-day/week) -- each view
+  remembering its own layout, grouping, sorting and filters
+- Quick add with natural-language parsing, and `#project` / `@label` autocomplete
+- Sections, labels, saved filters, project templates
+- Sidebar with nesting, favourites, emoji and live counts
+- Command palette (⌘K), settings window, keyboard shortcuts, task detail peek
+- `remit-cli`, a separate binary for automation
 
-What's explicitly not here yet: board/calendar layouts, drag-and-drop, the command palette,
-labels, filters, templates, the MCP server, and the whole visual pass to actually match Todoist.
-All of it is scoped in `ROADMAP.md`, grouped by priority and cross-referenced to the original
+Not there yet: drag-and-drop is partial, the MCP server, and the visual pass to fully match
+Todoist. All scoped in `ROADMAP.md`, grouped by priority and cross-referenced to the original
 prompt log.
 
 ## Architecture
@@ -74,9 +72,40 @@ Requires macOS 14+ and Xcode 15+. First launch prompts for Reminders access
 See `ROADMAP.md` for the full backlog, organized P0 (core loop) through P2 (nice-to-have),
 distilled from the previous build's complete prompt history.
 
-## Distribution plan
+## Install
 
-Not yet set up. The intent is: proper code signing with a Developer ID, notarization, DMG
-builds attached to GitHub Releases, and Sparkle for in-app auto-updates -- so this can be
-handed to other people, not just run locally. None of that is wired up yet; get the app working
-first.
+Download the DMG from [Releases](https://github.com/niteshrathore/Remit-Todo/releases), open
+it, and drag Remit to Applications. Or build one yourself:
+
+```
+./release.sh 0.2.0 --install
+```
+
+**Ad-hoc signed, not notarized.** A DMG you build runs fine on the machine that built it. One
+you *download* is quarantined by macOS until you right-click Remit and choose Open, or run
+`xattr -dr com.apple.quarantine /Applications/Remit.app`. Fixing that properly needs a paid
+Apple Developer ID; `release.sh` switches to a hardened-runtime Developer ID signature
+automatically once one is present. See `CONTRIBUTING.md`.
+
+Still to come: notarization, and Sparkle for in-app auto-updates.
+
+## Your data
+
+Remit is a view over Apple Reminders and has never stored a task or a list. Tasks, lists, due
+dates, priorities and tags live in Apple Reminders and sync through iCloud like always.
+
+The only thing Remit keeps of its own is the decoration layer EventKit has nowhere to put --
+sections, labels, saved filters, templates, project emoji, nesting, favourites -- in
+`~/Library/Application Support/Remit/metadata.json`. Deleting that file costs you none of your
+actual tasks.
+
+That file is defended: every write keeps the previous copy as `metadata.backup.json`, a file
+that won't decode is moved aside rather than overwritten and the backup restored, and anything
+unusual is reported in a banner instead of being swallowed. Adding a field to the format cannot
+invalidate an older file. `CONTRIBUTING.md` has the details and the backup command.
+
+## Development
+
+`./run.sh` to build and launch, `swift test` for the suite, `git tag vX.Y.Z && git push --tags`
+to cut a release. CI builds and tests every push and smoke-tests the DMG. See
+`CONTRIBUTING.md`.

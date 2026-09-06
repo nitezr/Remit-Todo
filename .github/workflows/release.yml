@@ -1,0 +1,59 @@
+name: Release
+
+# Tagging is the release trigger, so cutting a version is `git tag v0.2.0 && git push --tags`
+# and nothing else. See CONTRIBUTING.md "Cutting a release".
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. 0.2.0)'
+        required: true
+
+jobs:
+  release:
+    runs-on: macos-14
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # release.sh derives the marketing version from `git describe` and the build number
+          # from `git rev-list --count HEAD`; a shallow clone breaks both.
+          fetch-depth: 0
+
+      # A tag that fails its own tests should not become a release.
+      - name: Test
+        run: swift test
+
+      - name: Build DMG
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          ./release.sh "$VERSION"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Remit-${{ env.VERSION }}.dmg
+          draft: false
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            Download the DMG, open it, and drag Remit to Applications.
+
+            **This build is ad-hoc signed, not notarized.** macOS blocks downloaded apps that
+            are not notarized, so on first launch you need to either right-click Remit and
+            choose **Open**, or run:
+
+            ```
+            xattr -dr com.apple.quarantine /Applications/Remit.app
+            ```
+
+            Notarizing properly needs a paid Apple Developer ID; until then this step is
+            unavoidable. Remit asks for Reminders access on first launch — your tasks live in
+            Apple Reminders, and Remit stores nothing but its own display metadata.

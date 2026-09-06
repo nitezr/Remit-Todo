@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    # macOS 14 is the deployment target in Package.swift; building on it means CI fails on an
+    # API that is too new rather than the user discovering it at launch.
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Build
+        run: swift build
+
+      # The persistence tests deliberately avoid EventKit, so they run headless on a runner with
+      # no Reminders database and no TCC grant.
+      - name: Test
+        run: swift test
+
+      # Packaging breaking is a release-day problem otherwise: this proves the DMG still builds
+      # on every push, without publishing anything.
+      - name: Package smoke test
+        run: |
+          ./release.sh 0.0.0-ci
+          test -f dist/Remit-0.0.0-ci.dmg
+          hdiutil attach dist/Remit-0.0.0-ci.dmg -nobrowse -readonly -mountpoint /tmp/remit-dmg
+          test -d /tmp/remit-dmg/Remit.app
+          test -x /tmp/remit-dmg/Remit.app/Contents/MacOS/Remit
+          hdiutil detach /tmp/remit-dmg
