@@ -219,6 +219,10 @@ struct TaskListView: View {
                 }
             }
             .listStyle(.plain)
+            // Otherwise List paints its own system white and the off-white page colour never
+            // shows, which is what made every surface the same brightness.
+            .scrollContentBackground(.hidden)
+            .background(Theme.pageBackground)
             .onChange(of: selectedTaskID) { _, id in
                 guard let id else { return }
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }

@@ -343,6 +343,7 @@ struct TaskCard: View {
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(Theme.cardBackground)
+                .shadow(color: Theme.cardShadow, radius: 2.5, x: 0, y: 1)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)

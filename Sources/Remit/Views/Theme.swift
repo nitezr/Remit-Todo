@@ -35,11 +35,20 @@ enum Theme {
     /// Todoist's signature red, used for P1 and the active accent.
     static let accent = Color(light: Color(hex: "#DC4C3E"), dark: Color(hex: "#E8695D"))
 
-    static let pageBackground = Color(light: Color(hex: "#FFFFFF"), dark: Color(hex: "#1F1F1F"))
-    static let sidebarBackground = Color(light: Color(hex: "#FAFAFA"), dark: Color(hex: "#282828"))
+    // Three levels, deepest to lightest: sidebar, page, card. The page was #FFFFFF and the card
+    // was also #FFFFFF, so a card had *no* contrast against what it sat on -- only its 1px border
+    // separated the two, which is why cards read as flat outlines instead of surfaces, and why a
+    // full window of it is harsh to look at. An off-white page is what lets a white card lift, and
+    // it is the single biggest reason the reference looks calmer at the same brightness.
+    static let pageBackground = Color(light: Color(hex: "#FAF9F7"), dark: Color(hex: "#1F1F1F"))
+    static let sidebarBackground = Color(light: Color(hex: "#F3F1EE"), dark: Color(hex: "#282828"))
     static let cardBackground = Color(light: Color(hex: "#FFFFFF"), dark: Color(hex: "#2C2C2C"))
-    static let columnBackground = Color(light: Color(hex: "#F5F5F5"), dark: Color(hex: "#252525"))
-    static let separator = Color(light: Color(hex: "#EBEBEB"), dark: Color(hex: "#3A3A3A"))
+    static let columnBackground = Color(light: Color(hex: "#F0EEEB"), dark: Color(hex: "#252525"))
+    static let separator = Color(light: Color(hex: "#E6E3DF"), dark: Color(hex: "#3A3A3A"))
+
+    /// The lift under a card. Deliberately tiny: the elevation is doing the separating, so the
+    /// border can stay almost invisible instead of drawing the shape by itself.
+    static let cardShadow = Color(light: Color.black.opacity(0.055), dark: Color.black.opacity(0.28))
 
     static let primaryText = Color(light: Color(hex: "#202020"), dark: Color(hex: "#E3E3E3"))
     static let secondaryText = Color(light: Color(hex: "#808080"), dark: Color(hex: "#9A9A9A"))
