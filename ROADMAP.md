@@ -98,9 +98,10 @@ only the implementation (native SwiftUI instead of Electron/Glaze).
       Reminders.app rather than being promoted to a tag. Apple ships no public API for Reminders
       tags on any surface. Consequence: labels do not sync to iPhone and are invisible in
       Reminders.app. Do not re-attempt this.
-- [ ] Filters are built from scratch in Remit (Reminders has no native filter concept) (#27)
+- [x] Filters are built from scratch in Remit (Reminders has no native filter concept) (#27) --
+      saved from any view's Display menu, listed with their criteria on the Filters & Labels page
 - [ ] Group-by-Label option in view options (#70)
-- [ ] Label picker/list is legible — the Electron build shipped a label section the user
+- [x] Label picker/list is legible — the Electron build shipped a label section the user
       couldn't even read (#42); treat contrast/sizing as a real requirement, not a detail
 
 ## P1 — Drag-and-drop (full scope)
