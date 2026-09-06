@@ -6,6 +6,7 @@ struct RemitApp: App {
     @StateObject private var metadataStore = MetadataStore()
     @StateObject private var displayPrefs = DisplayPrefsStore()
     @StateObject private var uiState = UIState()
+    @StateObject private var shortcuts = ShortcutsStore()
     @AppStorage("sidebar.visible") private var sidebarVisible = true
 
     var body: some Scene {
@@ -15,6 +16,7 @@ struct RemitApp: App {
                 .environmentObject(metadataStore)
                 .environmentObject(displayPrefs)
                 .environmentObject(uiState)
+                .environmentObject(shortcuts)
                 .task {
                     // Deliberately does NOT request access here. Prompt #41 asked for an explicit
                     // "Connect to Apple Reminders" step rather than a permission dialog appearing

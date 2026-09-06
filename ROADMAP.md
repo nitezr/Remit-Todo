@@ -68,7 +68,7 @@ only the implementation (native SwiftUI instead of Electron/Glaze).
       collapse icon (#34)
 - [ ] **Favorites** section pinned above My Projects — projects, filters, or labels can be
       favorited (#28, #44, #46)
-- [ ] Settings gear icon accessible from the sidebar itself, icon-only (#38)
+- [x] Settings gear icon accessible from the sidebar itself, icon-only (#38)
 - [ ] Sidebar can be hidden/shown with **⌘S**, and the toggle must actually persist and the
       keyboard shortcut must actually fire — both regressed at least once in the Electron build
       (#76, #77, #78) — write a test/manual-check step for this specifically
@@ -121,7 +121,7 @@ only the implementation (native SwiftUI instead of Electron/Glaze).
       reported broken/missing in the Electron build (#68, #69) — get autocomplete triggers right
       the first time
 - [ ] Search accessible from the quick-add/command surface too, not only ⌘K (#67)
-- [ ] All shortcuts remappable from a dedicated **Settings → Shortcuts** panel inside a
+- [x] All shortcuts remappable from a dedicated **Settings → Shortcuts** panel inside a
       multi-tab settings window (#74); this must be a real, working panel — a `⌘S` sidebar
       toggle was requested, "added," and reported broken twice before it actually worked (#76–78)
 

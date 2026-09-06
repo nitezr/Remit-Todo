@@ -76,7 +76,9 @@ codesign --force --sign "${IDENTITY:--}" "$DMG" 2>/dev/null || true
 
 if [ "$INSTALL" = true ]; then
     echo "==> Installing to /Applications"
-    pkill -f "Remit.app/Contents/MacOS/Remit" 2>/dev/null || true
+# Anchored: the unanchored pattern also matched /Applications/Glaze/Remit.app, so every
+# run silently killed the old Electron build the user still had open.
+    pkill -f "^/Applications/Remit.app/Contents/MacOS/Remit" 2>/dev/null || true
     sleep 1
     rm -rf /Applications/Remit.app
     cp -R "$APP" /Applications/Remit.app

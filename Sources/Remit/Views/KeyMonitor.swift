@@ -29,6 +29,12 @@ final class KeyMonitor: ObservableObject {
         if let token { NSEvent.removeMonitor(token) }
     }
 
+    /// True while the settings panel is capturing a chord to bind. Ordering between two local
+    /// event monitors is not guaranteed, so the task list checks this flag explicitly rather than
+    /// trusting the recorder's monitor to run first -- otherwise recording `e` would complete a
+    /// task behind the sheet.
+    static var isRecording = false
+
     /// True while a text field owns the keyboard -- SwiftUI TextFields edit through an NSTextView
     /// field editor, so that's what shows up as first responder.
     static var isEditingText: Bool {

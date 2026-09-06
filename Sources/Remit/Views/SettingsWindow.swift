@@ -8,83 +8,164 @@ struct SettingsWindow: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        TabView {
-            ShortcutsSettings()
-                .tabItem { Label("Shortcuts", systemImage: "keyboard") }
-            GeneralSettings()
-                .tabItem { Label("General", systemImage: "gearshape") }
-            AutomationSettings()
-                .tabItem { Label("Automation", systemImage: "terminal") }
-            DataSettings()
-                .tabItem { Label("Data", systemImage: "externaldrive") }
+        VStack(spacing: 0) {
+            TabView {
+                ShortcutsSettings()
+                    .tabItem { Label("Shortcuts", systemImage: "keyboard") }
+                GeneralSettings()
+                    .tabItem { Label("General", systemImage: "gearshape") }
+                AutomationSettings()
+                    .tabItem { Label("Automation", systemImage: "terminal") }
+                DataSettings()
+                    .tabItem { Label("Data", systemImage: "externaldrive") }
+            }
+
+            Divider().overlay(Theme.separator)
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         }
-        .frame(width: 480, height: 420)
-        .overlay(alignment: .bottomTrailing) {
-            Button("Done") { dismiss() }
-                .keyboardShortcut(.defaultAction)
-                .padding(12)
-        }
+        // The old 480x420 clipped the shortcuts list, and Done floated on top of the rows it
+        // covered. Bigger, and Done sits in its own bar below the tabs rather than over them.
+        .frame(width: 640, height: 600)
     }
 }
 
-/// Reference list of every binding. Remapping is not built yet -- rather than ship a picker that
-/// silently doesn't rebind anything (the exact failure #76-#78 describes), this states the fact.
+/// Real remapping (ROADMAP.md #74).
+///
+/// #76-#78 are three rounds of a shortcut being "added" and not actually working, so this panel is
+/// wired to the same store `TaskListView` dispatches from -- there is no second copy of the
+/// bindings to drift out of sync. Rebinding here changes behaviour immediately, with no restart.
 struct ShortcutsSettings: View {
-    private let groups: [(String, [(String, String)])] = [
-        ("Navigation", [
-            ("j / \u{2193}", "Next task"),
-            ("k / \u{2191}", "Previous task"),
-            ("\u{2318}K  or  /", "Command palette / search"),
-            ("\u{2318}S", "Toggle sidebar"),
-            ("?", "This shortcuts panel"),
-            ("\u{2190} \u{2192}", "Move between board columns"),
-        ]),
-        ("Tasks", [
-            ("e", "Complete task"),
-            ("1 - 4", "Priority 1-4"),
-            ("l", "Edit labels"),
-            ("i / \u{21A9}", "Open task detail"),
-            ("q / a", "Quick add"),
-            ("\u{2318}\u{232B}", "Delete task"),
-            ("\u{2318}Z", "Undo last change"),
-        ]),
-        ("Schedule", [
-            ("t", "Today"),
-            ("u / m", "Tomorrow"),
-            ("w", "This weekend"),
-            ("n", "Next week"),
-            ("0 / \u{21E7}T", "Remove due date"),
-        ]),
-    ]
+    @EnvironmentObject private var shortcuts: ShortcutsStore
+    @State private var recordingAction: ShortcutAction?
+    @State private var recording = false
+    @State private var note: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                ForEach(groups, id: \.0) { group in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(group.0)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        ForEach(group.1, id: \.0) { binding in
-                            HStack {
-                                Text(binding.0)
-                                    .font(.system(size: 12, design: .monospaced))
-                                    .frame(width: 90, alignment: .leading)
-                                Text(binding.1)
-                                    .font(.system(size: 12))
-                                Spacer()
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(ShortcutAction.Group.allCases) { group in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(group.rawValue)
+                                .font(Theme.font(11, .semibold))
+                                .foregroundStyle(Theme.secondaryText)
+                                .textCase(.uppercase)
+                                .padding(.bottom, 4)
+
+                            ForEach(ShortcutAction.allCases.filter { $0.group == group }) { action in
+                                row(action)
+                            }
+
+                            let fixed = ShortcutAction.fixedBindings.filter { $0.group == group }
+                            ForEach(Array(fixed.enumerated()), id: \.offset) { _, item in
+                                fixedRow(keys: item.keys, title: item.title)
                             }
                         }
                     }
                 }
-
-                Text("Remapping is not built yet — these bindings are fixed. They match the Glaze build's defaults.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 4)
+                .padding(18)
             }
-            .padding(16)
+
+            Divider().overlay(Theme.separator)
+
+            HStack(spacing: 8) {
+                if let note {
+                    Text(note)
+                        .font(Theme.font(10.5))
+                        .foregroundStyle(Theme.secondaryText)
+                        .lineLimit(2)
+                } else {
+                    Text("Click a shortcut to record a new key. Esc cancels.")
+                        .font(Theme.font(10.5))
+                        .foregroundStyle(Theme.secondaryText)
+                }
+                Spacer()
+                Button("Reset All") {
+                    shortcuts.resetAll()
+                    note = "All shortcuts restored to defaults."
+                }
+                .buttonStyle(.link)
+                .font(Theme.font(11))
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
         }
+        .background(ShortcutRecorder(recording: $recording) { binding in
+            guard let action = recordingAction else { return }
+            if let stolen = shortcuts.assign(binding, to: action) {
+                note = "\(binding.display) was on \(stolen.title); it now runs \(action.title)."
+            } else {
+                note = "\(action.title) is now \(binding.display)."
+            }
+            recordingAction = nil
+        })
+    }
+
+    private func row(_ action: ShortcutAction) -> some View {
+        let isRecording = recordingAction == action
+        return HStack(spacing: 10) {
+            Text(action.title)
+                .font(Theme.font(12.5))
+                .foregroundStyle(Theme.primaryText)
+            Spacer(minLength: 12)
+
+            if shortcuts.isCustomized(action) {
+                Button {
+                    shortcuts.reset(action)
+                    note = "\(action.title) restored to its default."
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 9.5))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.secondaryText)
+                .help("Reset to default")
+            }
+
+            Button {
+                recordingAction = action
+                recording = true
+            } label: {
+                if isRecording {
+                    Text("Press a key…")
+                        .font(Theme.font(11))
+                        .foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4.5)
+                                .strokeBorder(Theme.accent, lineWidth: 1)
+                        )
+                } else {
+                    KeyCapRow(bindings: shortcuts.bindings(for: action), emphasized: true)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 3.5)
+        .contentShape(Rectangle())
+    }
+
+    /// Structural keys, shown greyed so the panel documents everything that works rather than only
+    /// the editable half -- but visibly not offered as rebindable, which would be a lie.
+    private func fixedRow(keys: String, title: String) -> some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(Theme.font(12.5))
+                .foregroundStyle(Theme.secondaryText)
+            Spacer(minLength: 12)
+            KeyCap(text: keys)
+            Text("fixed")
+                .font(Theme.font(9.5))
+                .foregroundStyle(Theme.secondaryText.opacity(0.7))
+        }
+        .padding(.vertical, 3.5)
     }
 }
 

@@ -26,7 +26,9 @@ codesign --force --sign - "$APP" 2>/dev/null || true
 if [ "$1" = "--install" ]; then
     rm -rf /Applications/Remit.app
     cp -R "$APP" /Applications/Remit.app
-    pkill -f "Remit.app/Contents/MacOS/Remit" 2>/dev/null || true
+    # Anchored: the unanchored pattern also matched /Applications/Glaze/Remit.app, so every
+    # run silently killed the old Electron build the user still had open.
+    pkill -f "^/Applications/Remit.app/Contents/MacOS/Remit" 2>/dev/null || true
     sleep 1
     open /Applications/Remit.app
     echo "installed and launched /Applications/Remit.app"
@@ -42,7 +44,9 @@ if [ -d /Applications/Remit.app ]; then
     APP=/Applications/Remit.app
 fi
 
-pkill -f "Remit.app/Contents/MacOS/Remit" 2>/dev/null || true
+# Anchored: the unanchored pattern also matched /Applications/Glaze/Remit.app, so every
+# run silently killed the old Electron build the user still had open.
+pkill -f "^/Applications/Remit.app/Contents/MacOS/Remit" 2>/dev/null || true
 pkill -f "^\.build/debug/Remit" 2>/dev/null || true
 sleep 1
 open "$APP"

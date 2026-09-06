@@ -20,6 +20,7 @@ struct ContentView: View {
     @EnvironmentObject private var remindersService: RemindersService
     @EnvironmentObject private var metadataStore: MetadataStore
     @EnvironmentObject private var uiState: UIState
+    @EnvironmentObject private var shortcuts: ShortcutsStore
     @State private var selection: SidebarSelection? = .today
     /// Shared with the View menu's toggle in RemitApp via AppStorage rather than passed down, so
     /// the menu command and the split view can't drift out of sync -- the Electron build shipped a
@@ -62,20 +63,76 @@ struct ContentView: View {
 
     // A sheet rather than a docked panel: #35 was a real layout bug where a sticky shortcuts
     // panel ate the project list's scroll space when both were visible.
+    //
+    // This is the read-only reference. It used to embed the settings panel, which meant the help
+    // sheet and the editor were the same cramped 420x460 view doing two jobs badly; editing now
+    // lives in Settings and this just answers "what key does what", in two columns so the whole
+    // set is visible at once instead of scrolling past the fold.
     private var shortcutsSheet: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(spacing: 0) {
             HStack {
                 Text("Keyboard Shortcuts")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(Theme.font(15, .semibold))
                 Spacer()
+                Button("Customize…") {
+                    uiState.shortcutsHelpOpen = false
+                    uiState.settingsOpen = true
+                }
+                .buttonStyle(.link)
+                .font(Theme.font(12))
                 Button("Done") { uiState.shortcutsHelpOpen = false }
                     .keyboardShortcut(.defaultAction)
             }
-            .padding(16)
-            Divider()
-            ShortcutsSettings()
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+
+            Divider().overlay(Theme.separator)
+
+            ScrollView {
+                HStack(alignment: .top, spacing: 28) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        shortcutGroup(.navigation)
+                        shortcutGroup(.schedule)
+                    }
+                    VStack(alignment: .leading, spacing: 18) {
+                        shortcutGroup(.tasks)
+                    }
+                }
+                .padding(18)
+            }
         }
-        .frame(width: 420, height: 460)
+        .frame(width: 620, height: 520)
+    }
+
+    private func shortcutGroup(_ group: ShortcutAction.Group) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(group.rawValue)
+                .font(Theme.font(11, .semibold))
+                .foregroundStyle(Theme.secondaryText)
+                .textCase(.uppercase)
+                .padding(.bottom, 2)
+
+            ForEach(ShortcutAction.allCases.filter { $0.group == group }) { action in
+                HStack(spacing: 10) {
+                    Text(action.title)
+                        .font(Theme.font(12.5))
+                    Spacer(minLength: 14)
+                    KeyCapRow(bindings: shortcuts.bindings(for: action))
+                }
+            }
+            ForEach(
+                Array(ShortcutAction.fixedBindings.filter { $0.group == group }.enumerated()),
+                id: \.offset
+            ) { _, item in
+                HStack(spacing: 10) {
+                    Text(item.title)
+                        .font(Theme.font(12.5))
+                        .foregroundStyle(Theme.secondaryText)
+                    Spacer(minLength: 14)
+                    KeyCap(text: item.keys)
+                }
+            }
+        }
     }
 
     @ViewBuilder

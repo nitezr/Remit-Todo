@@ -28,6 +28,7 @@ struct TaskListView: View {
     @FocusState private var focus: RemitFocusTarget?
     @StateObject private var keyMonitor = KeyMonitor()
     @EnvironmentObject private var displayPrefs: DisplayPrefsStore
+    @EnvironmentObject private var shortcuts: ShortcutsStore
     @EnvironmentObject private var uiState: UIState
 
     var body: some View {
@@ -530,14 +531,14 @@ struct TaskListView: View {
 
     // MARK: - Keyboard
 
-    /// Bindings match the Glaze build's defaults in `renderer/lib/shortcut-config.ts` so muscle
-    /// memory carries over. Remapping (Settings -> Shortcuts) is still unbuilt -- see ROADMAP.md.
+    /// Bindings come from ShortcutsStore, which resolves the user's overrides over the Glaze
+    /// build's defaults so muscle memory carries over until they change something.
     ///
     /// Returns true when the key was consumed. Anything typed into an add field is left alone, so
     /// shortcuts can be plain letters without eating task titles.
     private func handleEvent(_ event: NSEvent) -> Bool {
         RemitLog.debug("key code=\(event.keyCode) chars=\(event.charactersIgnoringModifiers ?? "") editing=\(KeyMonitor.isEditingText) responder=\(String(describing: NSApp.keyWindow?.firstResponder))")
-        guard !KeyMonitor.isEditingText else { return false }
+        guard !KeyMonitor.isEditingText, !KeyMonitor.isRecording else { return false }
 
         // macOS sets .function and .numericPad on arrow keys. Leaving them in the comparison
         // below made every arrow fail the "no modifiers" guard and fall through unhandled -- in
@@ -565,27 +566,34 @@ struct TaskListView: View {
         default: break
         }
 
-        switch event.charactersIgnoringModifiers {
-        case "j": moveSelection(.down)
-        case "k": moveSelection(.up)
-        case "e": completeSelected()
-        case "1": applyPriority(.p1)
-        case "2": applyPriority(.p2)
-        case "3": applyPriority(.p3)
-        case "4": applyPriority(.p4)
-        case "t": schedule(.today)
-        case "u", "m": schedule(.tomorrow)
-        case "w": schedule(.weekend)
-        case "n": schedule(.nextWeek)
-        case "0", "T": schedule(.none)
-        case "q", "a": openFirstAddRow()
-        case "l": labelSheetTask = ensureSelection()
-        case "i": peekTask = ensureSelection()
-        case "/": uiState.paletteOpen = true
-        case "?": uiState.shortcutsHelpOpen = true
-        default: return false
-        }
+        // Dispatch through the same store the Settings panel edits, so a rebind takes effect
+        // immediately and there is no second copy of the table to drift (#74, and #76-#78 where a
+        // shortcut was "added" but never actually wired).
+        guard let action = shortcuts.action(matching: event) else { return false }
+        perform(action)
         return true
+    }
+
+    private func perform(_ action: ShortcutAction) {
+        switch action {
+        case .nextTask: moveSelection(.down)
+        case .previousTask: moveSelection(.up)
+        case .completeTask: completeSelected()
+        case .priority1: applyPriority(.p1)
+        case .priority2: applyPriority(.p2)
+        case .priority3: applyPriority(.p3)
+        case .priority4: applyPriority(.p4)
+        case .scheduleToday: schedule(.today)
+        case .scheduleTomorrow: schedule(.tomorrow)
+        case .scheduleWeekend: schedule(.weekend)
+        case .scheduleNextWeek: schedule(.nextWeek)
+        case .scheduleClear: schedule(.none)
+        case .quickAdd: openFirstAddRow()
+        case .editLabels: labelSheetTask = ensureSelection()
+        case .openDetail: peekTask = ensureSelection()
+        case .commandPalette: uiState.paletteOpen = true
+        case .shortcutsPanel: uiState.shortcutsHelpOpen = true
+        }
     }
 
     private var selectedTask: RemitTask? {
