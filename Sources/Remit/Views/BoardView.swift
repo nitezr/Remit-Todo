@@ -337,16 +337,16 @@ struct TaskCard: View {
             }
             .padding(.leading, 24)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 10)
                 .fill(Theme.cardBackground)
                 .shadow(color: Theme.cardShadow, radius: 2.5, x: 0, y: 1)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(
                     isSelected ? Theme.accent.opacity(0.55) : Theme.separator,
                     lineWidth: 1

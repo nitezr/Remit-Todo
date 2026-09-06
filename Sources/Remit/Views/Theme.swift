@@ -27,7 +27,7 @@ enum Theme {
     static var sectionHeader: Font { font(14, .semibold) }
     static var sidebarRow: Font { font(14) }
     static var sidebarHeader: Font { font(12, .semibold) }
-    static var cardTitle: Font { font(14) }
+    static var cardTitle: Font { font(14.5) }
     static var viewTitle: Font { font(21, .bold) }
 
     // MARK: - Colour

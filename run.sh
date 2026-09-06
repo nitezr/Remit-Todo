@@ -17,7 +17,13 @@ cp .build/debug/Remit "$APP/Contents/MacOS/Remit"
 # Ship the CLI inside the bundle so Settings -> Automation has a stable path to point at, and so
 # installing the app installs the automation tool with it.
 cp .build/debug/remit-cli "$APP/Contents/MacOS/remit-cli"
-codesign --force --sign - "$APP" 2>/dev/null || true
+# Prefer the stable local identity if ./setup-signing.sh has been run: an ad-hoc signature
+# changes with every code change, and macOS revokes the Reminders grant when it does.
+SIGN_ID="-"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "Remit Development"; then
+    SIGN_ID="Remit Development"
+fi
+codesign --force --sign "$SIGN_ID" "$APP" 2>/dev/null || true
 
 # --install copies the bundle to /Applications so Remit shows up in Launchpad and Spotlight
 # like a normal app. Note that macOS ties the Reminders permission to the bundle's location, so

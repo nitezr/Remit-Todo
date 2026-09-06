@@ -264,9 +264,11 @@ enum TaskGrouping {
     static func dayTitle(_ date: Date, offset: Int) -> String {
         let weekday = date.formatted(.dateTime.weekday(.wide))
         let dayMonth = shortDate(date)
+        // The relative name *replaces* the weekday rather than joining it. "6 Sep · Today · Sunday"
+        // says the same thing twice; the reference reads "6 Sep · Today".
         switch offset {
-        case 0: return "\(dayMonth) · Today · \(weekday)"
-        case 1: return "\(dayMonth) · Tomorrow · \(weekday)"
+        case 0: return "\(dayMonth) · Today"
+        case 1: return "\(dayMonth) · Tomorrow"
         default: return "\(dayMonth) · \(weekday)"
         }
     }
