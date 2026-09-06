@@ -163,8 +163,17 @@ struct TaskListView: View {
 
                     SwiftUI.Section {
                         ForEach(section.tasks) { task in
-                            TaskRowView(task: task, showsProject: showsProjectColumn)
+                            TaskRowView(
+                                task: task,
+                                showsProject: showsProjectColumn,
+                                isSelected: selectedTaskID == task.id
+                            )
                                 .tag(task.id)
+                                // The row draws its own selected state and its own padding, so
+                                // List's separator and inset would double up on both.
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
+                                .listRowBackground(Color.clear)
                                 .contextMenu { taskMenu(task) }
                                 .onTapGesture(count: 2) { peekTask = task }
                         }
@@ -457,7 +466,34 @@ struct TaskListView: View {
 
     private var subtitle: String {
         let count = orderedTasks.count
-        return count == 1 ? "1 task" : "\(count) tasks"
+        let base = count == 1 ? "1 task" : "\(count) tasks"
+        // A filter removing rows must say so. The sidebar badge deliberately counts the *unfiltered*
+        // set so it still agrees with Reminders.app (ROADMAP.md "Known traps" #2, #79) -- which
+        // means without this the two numbers silently contradict each other, and tasks appear to
+        // have gone missing. Sleeping-hours in particular hides timed tasks with no other cue.
+        let hidden = unfilteredCount - count
+        guard hidden > 0 else { return base }
+        return "\(base) · \(hidden) hidden by filters"
+    }
+
+    /// The same date bucketing as `visibleTasks`, without the Display-menu and sleeping-hours
+    /// filters, so "hidden" above is measured against what this view would otherwise show.
+    private var unfilteredCount: Int {
+        let open = remindersService.tasks.filter { showsCompleted || !$0.isCompleted }
+        switch selection {
+        case .today:
+            return open.filter { $0.isDueToday || $0.isOverdue }.count
+        case .upcoming:
+            let startOfToday = Calendar.current.startOfDay(for: Date())
+            return open.filter { ($0.dueDate ?? .distantPast) >= startOfToday || $0.isOverdue }.count
+        case .inbox:
+            let defaultID = remindersService.defaultProjectID
+            return open.filter { $0.projectID == defaultID }.count
+        case .project(let id):
+            return open.filter { $0.projectID == id }.count
+        case .label, .filter, .filtersAndLabels:
+            return orderedTasks.count
+        }
     }
 
     // MARK: - Quick add
