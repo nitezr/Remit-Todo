@@ -86,6 +86,21 @@ struct TaskListView: View {
         .task(id: selection) {
             await remindersService.refreshAll()
         }
+        // Both of these were set but never presented: `i` / Return / double-click filled peekTask
+        // and `l` filled labelSheetTask, and nothing ever showed either one. That is exactly the
+        // failure ROADMAP.md records three times over (#76-#78) -- a feature that exists in code,
+        // is wired to its shortcut, and still does nothing on screen.
+        .sheet(item: $peekTask) { task in
+            TaskDetailPeek(
+                task: task,
+                siblings: orderedTasks,
+                onNavigate: { peekTask = $0 },
+                onDismiss: { peekTask = nil }
+            )
+        }
+        .sheet(item: $labelSheetTask) { task in
+            TaskLabelsSheet(task: task) { labelSheetTask = nil }
+        }
         .onAppear {
             RemitLog.debug("install monitor for \(selection.displayKey)")
             keyMonitor.install(handleEvent)

@@ -69,7 +69,7 @@ struct TaskDetailPeek: View {
                 sidebar
             }
         }
-        .frame(width: 740, height: 520)
+        .frame(width: 880, height: 660)
         .background(Theme.pageBackground)
         .onAppear(perform: load)
         .onChange(of: task.id) { load() }
@@ -126,14 +126,14 @@ struct TaskDetailPeek: View {
                     onDismiss()
                 } label: {
                     Image(systemName: "circle")
-                        .font(.system(size: 18))
+                        .font(.system(size: 21))
                         .foregroundStyle(Theme.priority(task.priority))
                 }
                 .buttonStyle(.plain)
 
                 TextField("Task name", text: $title, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(Theme.font(17, .medium))
+                    .font(Theme.font(22, .semibold))
                     .onSubmit(commitText)
             }
 
@@ -143,12 +143,16 @@ struct TaskDetailPeek: View {
                 .background(Color.clear)
                 .overlay(alignment: .topLeading) {
                     if notes.isEmpty {
-                        Text("Description")
-                            .font(Theme.font(13))
-                            .foregroundStyle(Theme.secondaryText)
-                            .padding(.top, 8)
-                            .padding(.leading, 5)
-                            .allowsHitTesting(false)
+                        HStack(spacing: 6) {
+                            Image(systemName: "text.alignleft")
+                                .font(.system(size: 11))
+                            Text("Description")
+                                .font(Theme.font(13))
+                        }
+                        .foregroundStyle(Theme.secondaryText)
+                        .padding(.top, 8)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
                     }
                 }
 
@@ -279,7 +283,8 @@ struct TaskDetailPeek: View {
             }
             .padding(14)
         }
-        .frame(width: 260)
+        .frame(width: 268)
+        .background(Theme.columnBackground)
         .background(Theme.sidebarBackground)
     }
 
@@ -287,11 +292,14 @@ struct TaskDetailPeek: View {
         _ title: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(Theme.font(11, .semibold))
+                .font(Theme.font(11.5, .semibold))
                 .foregroundStyle(Theme.secondaryText)
             content()
+            // A rule under each field, matching the reference. Spacing alone left the rail
+            // reading as one long column rather than a set of separate attributes.
+            Divider().overlay(Theme.separator).padding(.top, 4)
         }
     }
 
