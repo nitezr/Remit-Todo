@@ -40,6 +40,13 @@ let package = Package(
                     "-Xlinker", "Sources/remit-cli/Info.plist"
                 ])
             ]
+        ),
+        // Tests link against the app target so the persistence layer is covered by the same code
+        // the app actually ships, not a copy of it.
+        .testTarget(
+            name: "RemitTests",
+            dependencies: ["Remit"],
+            path: "Tests/RemitTests"
         )
     ]
 )

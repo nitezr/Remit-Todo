@@ -27,6 +27,21 @@ struct ContentView: View {
     @AppStorage("sidebar.visible") private var sidebarVisible = true
 
     var body: some View {
+        VStack(spacing: 0) {
+            // Above the split view, not inside the detail pane: a storage problem is not scoped to
+            // whichever list happens to be selected, and ROADMAP.md's known traps include state
+            // that exists in code but is never actually reachable on screen.
+            if let warning = metadataStore.storageWarning {
+                ErrorBanner(message: warning) { metadataStore.storageWarning = nil }
+            }
+            splitView
+        }
+        .sheet(isPresented: $uiState.paletteOpen) { paletteSheet }
+        .sheet(isPresented: $uiState.settingsOpen) { SettingsWindow() }
+        .sheet(isPresented: $uiState.shortcutsHelpOpen) { shortcutsSheet }
+    }
+
+    private var splitView: some View {
         NavigationSplitView(columnVisibility: columnVisibility) {
             SidebarView(selection: $selection)
         } detail: {
@@ -43,25 +58,24 @@ struct ContentView: View {
                 ContentUnavailableView("Select a view", systemImage: "checklist")
             }
         }
-        .sheet(isPresented: $uiState.paletteOpen) { paletteSheet }
-        .sheet(isPresented: $uiState.settingsOpen) { SettingsWindow() }
-        .sheet(isPresented: $uiState.shortcutsHelpOpen) {
-            // A sheet rather than a docked panel: #35 was a real layout bug where a sticky
-            // shortcuts panel ate the project list's scroll space when both were visible.
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Text("Keyboard Shortcuts")
-                        .font(.system(size: 14, weight: .semibold))
-                    Spacer()
-                    Button("Done") { uiState.shortcutsHelpOpen = false }
-                        .keyboardShortcut(.defaultAction)
-                }
-                .padding(16)
-                Divider()
-                ShortcutsSettings()
+    }
+
+    // A sheet rather than a docked panel: #35 was a real layout bug where a sticky shortcuts
+    // panel ate the project list's scroll space when both were visible.
+    private var shortcutsSheet: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Keyboard Shortcuts")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Button("Done") { uiState.shortcutsHelpOpen = false }
+                    .keyboardShortcut(.defaultAction)
             }
-            .frame(width: 420, height: 460)
+            .padding(16)
+            Divider()
+            ShortcutsSettings()
         }
+        .frame(width: 420, height: 460)
     }
 
     @ViewBuilder

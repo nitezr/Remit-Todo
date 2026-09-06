@@ -13,7 +13,7 @@ struct ErrorBanner: View {
                 .foregroundStyle(.orange)
             Text(message)
                 .font(.system(size: 11))
-                .lineLimit(2)
+                .lineLimit(3)
             Spacer()
             Button {
                 onDismiss()

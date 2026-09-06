@@ -6,6 +6,11 @@ import Foundation
 /// so this stays a pure decoration layer on top of the real Reminders data -- deleting this file
 /// loses none of the user's actual tasks.
 struct RemitMetadata: Codable {
+    /// Bumped only when a field changes *meaning*. Merely adding a field needs no bump -- that
+    /// case is handled by the tolerant decoder below. 0 means "written before versioning existed".
+    static let currentSchemaVersion = 1
+
+    var schemaVersion: Int = RemitMetadata.currentSchemaVersion
     var projects: [String: ProjectMetadata] = [:]
     var tasks: [String: TaskMetadata] = [:]
     var sections: [TaskSection] = []
@@ -16,6 +21,37 @@ struct RemitMetadata: Codable {
     var labelAssignments: [String: [String]] = [:]
     var templates: [ProjectTemplate] = []
     var filters: [SavedFilter] = []
+}
+
+extension RemitMetadata {
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion, projects, tasks, sections, favoriteProjectIDs
+        case labels, labelAssignments, templates, filters
+    }
+
+    /// Decoded field by field with defaults, rather than by the synthesised initialiser, which
+    /// throws on the first missing key.
+    ///
+    /// That difference is the entire point. This file gains fields as Remit grows -- `labels`,
+    /// `labelAssignments`, `templates` and `filters` all arrived after v0.1 -- and under
+    /// synthesised decoding every one of those additions makes an older file undecodable. Paired
+    /// with a loader that fell back to an empty store, an undecodable file meant the next write
+    /// silently erased every section, label, template, filter and project emoji the user had.
+    /// Decoding tolerantly here, and quarantining rather than overwriting in `MetadataStore.load`,
+    /// are the two halves of making that failure impossible.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
+        projects = try container.decodeIfPresent([String: ProjectMetadata].self, forKey: .projects) ?? [:]
+        tasks = try container.decodeIfPresent([String: TaskMetadata].self, forKey: .tasks) ?? [:]
+        sections = try container.decodeIfPresent([TaskSection].self, forKey: .sections) ?? []
+        favoriteProjectIDs = try container.decodeIfPresent([String].self, forKey: .favoriteProjectIDs) ?? []
+        labels = try container.decodeIfPresent([RemitLabel].self, forKey: .labels) ?? []
+        labelAssignments = try container.decodeIfPresent([String: [String]].self, forKey: .labelAssignments) ?? [:]
+        templates = try container.decodeIfPresent([ProjectTemplate].self, forKey: .templates) ?? []
+        filters = try container.decodeIfPresent([SavedFilter].self, forKey: .filters) ?? []
+    }
 }
 
 struct ProjectMetadata: Codable {
@@ -35,19 +71,66 @@ final class MetadataStore: ObservableObject {
     @Published private(set) var data: RemitMetadata
 
     private let fileURL: URL
+    private let backupURL: URL
 
-    init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = appSupport.appendingPathComponent("Remit", isDirectory: true)
+    /// Surfaced in the UI. Silent failure is the one thing this layer must never do: every
+    /// quarantine, restore and failed write reports itself here.
+    @Published var storageWarning: String?
+
+    /// `directory` is injectable purely so the quarantine, backup and restore behaviour can be
+    /// exercised against a temporary folder in tests rather than the user's real data.
+    init(directory: URL? = nil) {
+        let dir = directory ?? FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Remit", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         fileURL = dir.appendingPathComponent("metadata.json")
+        backupURL = dir.appendingPathComponent("metadata.backup.json")
 
-        if let raw = try? Data(contentsOf: fileURL),
-           let decoded = try? JSONDecoder().decode(RemitMetadata.self, from: raw) {
-            data = decoded
-        } else {
-            data = RemitMetadata()
+        let outcome = Self.load(primary: fileURL, backup: backupURL)
+        data = outcome.data
+        storageWarning = outcome.warning
+    }
+
+    /// Loading never destroys evidence.
+    ///
+    /// A file that will not decode is moved aside with a timestamp, never overwritten, and the
+    /// last known-good backup is tried before giving up. The previous implementation substituted
+    /// an empty store on any read or decode failure, which meant the next `persist()` -- triggered
+    /// by something as small as toggling one favourite -- wrote that emptiness over the real file.
+    private static func load(primary: URL, backup: URL) -> (data: RemitMetadata, warning: String?) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: primary.path) else {
+            return (RemitMetadata(), nil) // ordinary first run
         }
+        if let decoded = try? decode(primary) {
+            return (decoded, nil)
+        }
+
+        // Unreadable. Preserve it before touching anything else.
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let quarantine = primary.deletingLastPathComponent()
+            .appendingPathComponent("metadata.corrupt-\(stamp).json")
+        try? fm.moveItem(at: primary, to: quarantine)
+
+        if let recovered = try? decode(backup) {
+            return (
+                recovered,
+                "Remit could not read its metadata file, so the last good backup was restored. "
+                    + "The unreadable copy was kept as \(quarantine.lastPathComponent)."
+            )
+        }
+        return (
+            RemitMetadata(),
+            "Remit could not read its metadata file and no backup was available, so sections, "
+                + "labels, filters, templates and project emoji have been reset. The unreadable "
+                + "copy was kept as \(quarantine.lastPathComponent). Your Reminders lists and "
+                + "tasks are untouched -- Remit has never stored them."
+        )
+    }
+
+    private static func decode(_ url: URL) throws -> RemitMetadata {
+        try JSONDecoder().decode(RemitMetadata.self, from: Data(contentsOf: url))
     }
 
     /// Wipes the Remit layer back to first-run state. Reminders data is untouched -- this store
@@ -57,9 +140,25 @@ final class MetadataStore: ObservableObject {
         persist()
     }
 
+    /// Rolls the current good file into the backup slot, then writes atomically, so there is
+    /// never a moment with zero readable copies on disk. Reports failure instead of swallowing it.
     private func persist() {
-        guard let encoded = try? JSONEncoder().encode(data) else { return }
-        try? encoded.write(to: fileURL, options: .atomic)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let encoded = try? encoder.encode(data) else {
+            storageWarning = "Remit could not encode its metadata, so the last change was not saved."
+            return
+        }
+        let fm = FileManager.default
+        if fm.fileExists(atPath: fileURL.path) {
+            try? fm.removeItem(at: backupURL)
+            try? fm.copyItem(at: fileURL, to: backupURL)
+        }
+        do {
+            try encoded.write(to: fileURL, options: .atomic)
+        } catch {
+            storageWarning = "Remit could not save its metadata: \(error.localizedDescription)"
+        }
     }
 
     func setSection(_ sectionID: String?, forTask taskID: String) {
