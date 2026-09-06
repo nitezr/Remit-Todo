@@ -437,6 +437,7 @@ private extension RemitTask {
         labels = []
         sectionID = nil
         sortOrder = 0
+        isRecurring = reminder.hasRecurrenceRules
         url = reminder.url
         creationDate = reminder.creationDate
     }

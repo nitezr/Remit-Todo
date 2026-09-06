@@ -18,6 +18,9 @@ struct RemitTask: Identifiable, Hashable {
     var labels: [String]
     var sectionID: String?
     var sortOrder: Int
+    /// EventKit owns the recurrence rule; Remit only needs to know one exists, to show the badge
+    /// a repeating task carries on its card.
+    var isRecurring: Bool
     var url: URL?
     var creationDate: Date?
 }

@@ -41,10 +41,16 @@ struct TaskListView: View {
                     sections: sections,
                     showsProject: showsProjectColumn,
                     selectedTaskID: $selectedTaskID,
-                    onAddSection: boardSectionAdder
-                ) { task, section in
-                    move(task, to: section)
-                }
+                    onAddSection: boardSectionAdder,
+                    onDrop: { task, section in move(task, to: section) },
+                    onAddTask: { section in
+                        activeAddSection = section.id
+                        focus = .quickAdd
+                    },
+                    // Only the date-driven views get the big header; a project board already has
+                    // its name in the window title, and a month line under it would be meaningless.
+                    boardTitle: selection == .upcoming ? "Upcoming" : nil
+                )
             case .calendar:
                 CalendarView(
                     tasks: visibleTasks,
