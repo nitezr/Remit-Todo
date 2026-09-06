@@ -85,18 +85,20 @@ struct TaskRowView: View {
             }
         }
         .padding(.vertical, 9)
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
+        // A tinted fill carries the selection; the earlier accent-coloured border read as an error
+        // state rather than a highlight, which is the opposite of what a resting selection should
+        // say. The hairline is neutral and only there to give the fill an edge.
         .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(isSelected ? Theme.cardBackground : Color.clear)
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isSelected ? Theme.columnBackground : Color.clear)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 7)
-                        .strokeBorder(
-                            isSelected ? Theme.accent.opacity(0.45) : Color.clear,
-                            lineWidth: 1
-                        )
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(isSelected ? Theme.separator : Color.clear, lineWidth: 1)
                 )
         )
+        // Outer margin, so the card is inset from the list edge rather than bleeding into it.
+        .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .opacity(isCompleting ? 0.35 : 1)
         .animation(.easeOut(duration: 0.3), value: isCompleting)

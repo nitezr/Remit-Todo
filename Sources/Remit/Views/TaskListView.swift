@@ -151,8 +151,13 @@ struct TaskListView: View {
     }
 
     private var listLayout: some View {
-        VStack(spacing: 0) {
-            List(selection: $selectedTaskID) {
+        // No `selection:` binding on purpose. macOS draws its own full-bleed grey highlight for a
+        // selected row and offers no way to restyle it, so it showed through around the row's own
+        // card as a grey band. Selection is ours: keyboard movement already went through
+        // `moveSelection`, and a single tap covers the mouse. ScrollViewReader then keeps `j`/`k`
+        // from walking the selection off screen, which List's own selection used to handle.
+        ScrollViewReader { proxy in
+            List {
                 ForEach(sections) { section in
                     if let gap = section.gapLabel {
                         Text(gap)
@@ -168,14 +173,17 @@ struct TaskListView: View {
                                 showsProject: showsProjectColumn,
                                 isSelected: selectedTaskID == task.id
                             )
-                                .tag(task.id)
-                                // The row draws its own selected state and its own padding, so
-                                // List's separator and inset would double up on both.
+                                .id(task.id)
+                                // The row draws its own card and its own padding, so List's
+                                // separator and insets would double up on both.
                                 .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
+                                .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
                                 .listRowBackground(Color.clear)
                                 .contextMenu { taskMenu(task) }
+                                // Double before single: the reverse order lets the single tap win
+                                // the gesture and the peek never opens.
                                 .onTapGesture(count: 2) { peekTask = task }
+                                .onTapGesture { selectedTaskID = task.id }
                         }
                         // Reordering only makes sense against a manual order; under any computed
                         // sort the row would snap straight back, which reads as a broken drag.
@@ -186,19 +194,29 @@ struct TaskListView: View {
                         // Overdue never takes new tasks -- adding "to Overdue" has no meaning.
                         if !section.isOverdue {
                             addRow(for: section)
+                                .listRowInsets(EdgeInsets(top: 2, leading: 18, bottom: 2, trailing: 12))
                         }
                     } header: {
                         Text(section.title)
                             .font(Theme.sectionHeader)
+                            .foregroundStyle(Theme.primaryText)
+                            // Leading 18 lines the header up with the row title above it: 6pt of
+                            // card margin plus the card's own 12pt of padding.
+                            .listRowInsets(EdgeInsets(top: 14, leading: 18, bottom: 4, trailing: 12))
                             .contextMenu { sectionMenu(section) }
                     }
                 }
 
                 if case .project = selection {
                     addSectionRow
+                        .listRowInsets(EdgeInsets(top: 2, leading: 18, bottom: 2, trailing: 12))
                 }
             }
             .listStyle(.plain)
+            .onChange(of: selectedTaskID) { _, id in
+                guard let id else { return }
+                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }
+            }
         }
     }
 
