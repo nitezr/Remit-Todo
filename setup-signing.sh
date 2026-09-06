@@ -37,17 +37,24 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
     -addext "keyUsage=critical,digitalSignature" \
     -addext "extendedKeyUsage=critical,codeSigning" 2>/dev/null
 
+# A real password and -des3 on purpose. macOS's Security framework rejects a PKCS#12 built with
+# an empty password ("MAC verification failed"), and the system openssl here is LibreSSL, which
+# has no -legacy flag to fall back on.
 openssl pkcs12 -export -out "$TMP/identity.p12" \
-    -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -passout pass: 2>/dev/null
+    -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -passout pass:remit -des3 2>/dev/null
 
 echo "==> Importing into your login keychain"
 # -T /usr/bin/codesign grants codesign access to the private key. macOS may still ask once, on the
 # first signature, to confirm; choose "Always Allow" and it will not ask again.
-security import "$TMP/identity.p12" -k "$KEYCHAIN" -P "" -T /usr/bin/codesign
+security import "$TMP/identity.p12" -k "$KEYCHAIN" -P remit -T /usr/bin/codesign
 
 echo
 echo "Done. Verify with:"
-echo "    security find-identity -v -p codesigning"
+echo "    security find-identity -p codesigning        # note: no -v"
+echo
+echo "The certificate reports CSSMERR_TP_NOT_TRUSTED, which is expected and harmless here: it is"
+echo "self-signed, so it is not trusted for *distribution*. codesign still signs with it happily,"
+echo "and a stable identity is the whole point. This is why -v (valid/trusted only) hides it."
 echo
 echo "Then rebuild once:"
 echo "    ./run.sh"

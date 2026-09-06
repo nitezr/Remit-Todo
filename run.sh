@@ -20,7 +20,9 @@ cp .build/debug/remit-cli "$APP/Contents/MacOS/remit-cli"
 # Prefer the stable local identity if ./setup-signing.sh has been run: an ad-hoc signature
 # changes with every code change, and macOS revokes the Reminders grant when it does.
 SIGN_ID="-"
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "Remit Development"; then
+# No -v: a self-signed cert is untrusted for distribution, which -v filters out, but
+# codesign signs with it fine and that is all a stable identity needs.
+if security find-identity -p codesigning 2>/dev/null | grep -q "Remit Development"; then
     SIGN_ID="Remit Development"
 fi
 codesign --force --sign "$SIGN_ID" "$APP" 2>/dev/null || true
