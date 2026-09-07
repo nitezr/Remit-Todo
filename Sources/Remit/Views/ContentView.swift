@@ -22,6 +22,8 @@ struct ContentView: View {
     @EnvironmentObject private var uiState: UIState
     @EnvironmentObject private var shortcuts: ShortcutsStore
     @State private var selection: SidebarSelection? = .today
+    @StateObject private var history = NavigationHistory(start: .today)
+    @StateObject private var swipeMonitor = SwipeMonitor()
     /// Shared with the View menu's toggle in RemitApp via AppStorage rather than passed down, so
     /// the menu command and the split view can't drift out of sync -- the Electron build shipped a
     /// sidebar toggle that was "added" but not wired three separate times (ROADMAP.md #76-#78).
@@ -36,6 +38,29 @@ struct ContentView: View {
                 ErrorBanner(message: warning) { metadataStore.storageWarning = nil }
             }
             splitView
+        }
+        // Every selection change routes through the history so a click, a palette result and a
+        // swipe all stay in step. `history.current` is the source of truth; `selection` follows it.
+        .onChange(of: selection) { _, new in
+            guard new != history.current else { return }
+            history.visit(new)
+        }
+        .onAppear {
+            swipeMonitor.install { direction in
+                let destination = direction == .back ? history.goBack() : history.goForward()
+                guard let destination else { return false }  // let the event through at either end
+                selection = destination
+                return true
+            }
+        }
+        .onDisappear { swipeMonitor.remove() }
+        // The menu items signal through UIState because a CommandGroup lives outside the view
+        // hierarchy and cannot reach this view's history directly.
+        .onChange(of: uiState.navigateBack) { _, _ in
+            if let destination = history.goBack() { selection = destination }
+        }
+        .onChange(of: uiState.navigateForward) { _, _ in
+            if let destination = history.goForward() { selection = destination }
         }
         .sheet(isPresented: $uiState.paletteOpen) { paletteSheet }
         .sheet(isPresented: $uiState.settingsOpen) { SettingsWindow() }

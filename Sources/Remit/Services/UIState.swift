@@ -10,6 +10,10 @@ final class UIState: ObservableObject {
     @Published var paletteOpen = false
     @Published var settingsOpen = false
     @Published var shortcutsHelpOpen = false
+    /// Toggled by the Back/Forward menu items. A signal rather than a value: the history itself
+    /// lives in ContentView, and the menu has no access to it.
+    @Published var navigateBack = false
+    @Published var navigateForward = false
     /// Set by the palette when it picks a destination; ContentView applies it to the sidebar.
     @Published var pendingNavigation: SidebarSelection?
     @Published var pendingTaskID: String?

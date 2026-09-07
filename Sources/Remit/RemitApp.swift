@@ -51,6 +51,14 @@ struct RemitApp: App {
                 Button("Settings...") { uiState.settingsOpen = true }
                     .keyboardShortcut(",", modifiers: .command)
             }
+            // The same history the trackpad swipe drives. Menu items make it discoverable, give it
+            // the standard macOS shortcuts, and mean back/forward still works on a mouse.
+            CommandGroup(after: .toolbar) {
+                Button("Back") { uiState.navigateBack.toggle() }
+                    .keyboardShortcut("[", modifiers: .command)
+                Button("Forward") { uiState.navigateForward.toggle() }
+                    .keyboardShortcut("]", modifiers: .command)
+            }
             CommandGroup(after: .sidebar) {
                 Button(sidebarVisible ? "Hide Sidebar" : "Show Sidebar") {
                     sidebarVisible.toggle()
