@@ -21,6 +21,10 @@ struct RemitLabel: Identifiable, Hashable, Codable {
 
 enum LabelColor: String, CaseIterable, Codable {
     case red, orange, yellow, green, blue, purple, magenta, gray
+    // Added to cover the Todoist palette on import: without these, teal people-labels, a sky-blue
+    // discuss label and taupe/charcoal all collapsed into "blue" and "gray" and stopped being
+    // distinguishable at a glance, which is the entire job of a label colour.
+    case teal, skyBlue, taupe, charcoal
 
     var swiftUIColor: Color {
         switch self {
@@ -32,6 +36,29 @@ enum LabelColor: String, CaseIterable, Codable {
         case .purple: return .purple
         case .magenta: return Color(red: 0.85, green: 0.2, blue: 0.6)
         case .gray: return .gray
+        case .teal: return Color(hex: "#0F9B8E")
+        case .skyBlue: return Color(hex: "#2196C4")
+        case .taupe: return Color(hex: "#A08265")
+        case .charcoal: return Color(hex: "#6E6E6E")
+        }
+    }
+
+    /// Todoist's palette is larger than this one; anything without a direct match falls back to the
+    /// nearest hue rather than to grey, so an imported label still reads as itself.
+    static func fromTodoist(_ name: String) -> LabelColor {
+        switch name {
+        case "teal": return .teal
+        case "sky_blue", "light_blue": return .skyBlue
+        case "taupe": return .taupe
+        case "charcoal", "grey", "gray": return .charcoal
+        case "violet", "grape", "lavender": return .purple
+        case "green", "olive_green", "lime_green", "mint_green": return .green
+        case "orange", "salmon": return .orange
+        case "yellow": return .yellow
+        case "red", "berry_red": return .red
+        case "magenta": return .magenta
+        case "blue": return .blue
+        default: return .gray
         }
     }
 }
