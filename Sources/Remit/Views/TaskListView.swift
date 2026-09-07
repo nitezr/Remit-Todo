@@ -399,14 +399,24 @@ struct TaskListView: View {
     /// Hides tasks whose due *time* falls inside the configured sleeping window (#10, default
     /// 10PM-8AM). Only tasks with an explicit time are affected -- an all-day task has no time to
     /// judge, and hiding those would make tasks disappear for no visible reason.
+    ///
+    /// Midnight is treated as no time at all. Reminders records plenty of ordinary dated tasks at
+    /// exactly 00:00 local with an hour component present, so `hasDueTime` is true for them and
+    /// hour 0 sits inside the default window -- which hid a third of Today for a user east of UTC who
+    /// had never scheduled anything overnight. The setting exists to hide a 3am alarm, not to hide
+    /// every task that happens to carry a date.
     private func passesSleepingHours(_ task: RemitTask) -> Bool {
         guard UserDefaults.standard.bool(forKey: "general.hideSleepingHours"),
               task.hasDueTime, let due = task.dueDate else { return true }
 
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.hour, .minute], from: due)
+        if components.hour == 0 && (components.minute ?? 0) == 0 { return true }
+
         let defaults = UserDefaults.standard
         let start = defaults.object(forKey: "general.sleepStartHour") as? Int ?? 22
         let end = defaults.object(forKey: "general.sleepEndHour") as? Int ?? 8
-        let hour = Calendar.current.component(.hour, from: due)
+        let hour = calendar.component(.hour, from: due)
 
         // The window normally wraps midnight (22 -> 8); handle both orientations.
         let asleep = start <= end ? (hour >= start && hour < end) : (hour >= start || hour < end)
