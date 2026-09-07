@@ -61,6 +61,16 @@ struct QuickAddView: View {
     }
 
     private var suggestionList: some View {
+        // Height-capped and scrollable: showing every match matters, but a 22-row list would push
+        // the task list off screen.
+        ScrollView {
+            suggestionRows
+        }
+        .frame(maxHeight: suggestions.count > 7 ? 210 : nil)
+        .fixedSize(horizontal: false, vertical: suggestions.count <= 7)
+    }
+
+    private var suggestionRows: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, suggestion in
                 HStack(spacing: 6) {
@@ -113,20 +123,60 @@ struct QuickAddView: View {
         return (trigger, token.lowercased())
     }
 
+    /// Everything matching, ranked. The list scrolls rather than being truncated, so a name that
+    /// matches is always reachable -- a hard cap silently hid most of a 22-project list.
     private var suggestions: [Suggestion] {
         guard isFocused.wrappedValue == focusValue, let token = activeToken else { return [] }
         switch token.trigger {
         case "#":
             return projects
-                .filter { token.query.isEmpty || $0.title.lowercased().hasPrefix(token.query) }
-                .prefix(6)
-                .map { Suggestion(id: $0.id, name: $0.title, color: Color(hex: $0.colorHex), trigger: "#") }
+                .compactMap { project -> (Int, Suggestion)? in
+                    guard let rank = Self.rank(project.title, query: token.query) else { return nil }
+                    return (rank, Suggestion(
+                        id: project.id, name: project.title,
+                        color: Color(hex: project.colorHex), trigger: "#"
+                    ))
+                }
+                .sorted { $0.0 < $1.0 }
+                .map(\.1)
         default:
             return labels
-                .filter { token.query.isEmpty || $0.name.lowercased().hasPrefix(token.query) }
-                .prefix(6)
-                .map { Suggestion(id: $0.id, name: $0.name, color: $0.color.swiftUIColor, trigger: "@") }
+                .compactMap { label -> (Int, Suggestion)? in
+                    guard let rank = Self.rank(label.name, query: token.query) else { return nil }
+                    return (rank, Suggestion(
+                        id: label.id, name: label.name,
+                        color: label.color.swiftUIColor, trigger: "@"
+                    ))
+                }
+                .sorted { $0.0 < $1.0 }
+                .map(\.1)
         }
+    }
+
+    /// Lower ranks sort first; nil means no match.
+    ///
+    /// Matching ignores a leading emoji and matches anywhere in the name, not just at the start.
+    /// Project and label names here are emoji-prefixed -- "🤝 Acme", "⏳waiting" -- so prefix
+    /// matching against the raw title meant `#acme` and `@waiting` matched nothing at all, which
+    /// is the entire point of typing them.
+    static func rank(_ name: String, query: String) -> Int? {
+        guard !query.isEmpty else { return 0 }
+        let stripped = searchable(name)
+        if stripped.hasPrefix(query) { return 0 }
+        if stripped.contains(query) { return 1 }
+        // Last resort so a pasted or typed emoji still finds its own label.
+        if name.lowercased().contains(query) { return 2 }
+        return nil
+    }
+
+    /// The name with leading emoji and punctuation removed, lowercased, so "🤝 Acme" searches as
+    /// "acme".
+    static func searchable(_ name: String) -> String {
+        var text = name.lowercased()
+        while let first = text.first, !first.isLetter, !first.isNumber {
+            text.removeFirst()
+        }
+        return text.trimmingCharacters(in: .whitespaces)
     }
 
     /// Replaces the partial token with the full name. Spaces are stripped so the parser's

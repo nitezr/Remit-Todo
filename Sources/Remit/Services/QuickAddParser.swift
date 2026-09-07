@@ -65,9 +65,15 @@ enum QuickAddParser {
         guard let match = text.firstMatch(#"#(\S+)"#), let name = match.group(1)?.lowercased() else {
             return (text, nil)
         }
-        // Exact title first, then unique prefix -- `#Home` shouldn't silently pick "Homework".
-        let found = projects.first { $0.title.lowercased() == name }
-            ?? projects.first { $0.title.lowercased().hasPrefix(name) }
+        // Compared on a normalised form: names here carry leading emoji and spaces ("🤝 Acme"),
+        // and the suggestion list writes the token with spaces stripped ("#🤝Acme"), so neither an
+        // equality nor a prefix test on the raw title could ever match. Getting this wrong is
+        // quiet and expensive -- the task lands in the default list instead of the one you named.
+        let needle = normalizeName(name)
+        // Exact first, then prefix, so `#Home` cannot silently pick "Homework".
+        let found = projects.first { normalizeName($0.title) == needle }
+            ?? projects.first { normalizeName($0.title).hasPrefix(needle) }
+            ?? projects.first { normalizeName($0.title).contains(needle) }
         guard let found else { return (text, nil) }
         return (text.strippingMatch(match), found.id)
     }
@@ -102,7 +108,17 @@ enum QuickAddParser {
     }
 
     private static func normalizeLabel(_ value: String) -> String {
-        value.lowercased().replacingOccurrences(of: " ", with: "")
+        normalizeName(value)
+    }
+
+    /// Lowercased, with spaces removed and any leading emoji or punctuation dropped, so "🤝 Acme",
+    /// "#🤝Acme" and "acme" all reduce to the same thing.
+    static func normalizeName(_ value: String) -> String {
+        var text = value.lowercased().replacingOccurrences(of: " ", with: "")
+        while let first = text.first, !first.isLetter, !first.isNumber {
+            text.removeFirst()
+        }
+        return text
     }
 
     private static func extractPriority(_ text: String) -> (String, Priority?) {
