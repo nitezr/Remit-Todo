@@ -80,7 +80,7 @@ struct BoardView: View {
                 Divider().frame(height: 16).overlay(Theme.separator)
                 Button("Today") { scrollTarget = todayColumnID }
                     .buttonStyle(.plain)
-                    .font(Theme.font(12.5))
+                    .font(Theme.font(13))
                     .foregroundStyle(Theme.primaryText)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 5)
@@ -176,7 +176,7 @@ struct BoardView: View {
             // reads as an annotation rather than a second title.
             HStack(spacing: 7) {
                 Text(section.title)
-                    .font(Theme.font(14.5, .semibold))
+                    .font(Theme.font(15, .semibold))
                     .foregroundStyle(Theme.primaryText)
                 Text("\(section.tasks.count)")
                     .font(Theme.font(12))

@@ -294,7 +294,7 @@ struct TaskDetailPeek: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(Theme.font(11.5, .semibold))
+                .font(Theme.font(12, .semibold))
                 .foregroundStyle(Theme.secondaryText)
             content()
             // A rule under each field, matching the reference. Spacing alone left the rail

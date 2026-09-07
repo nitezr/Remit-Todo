@@ -12,7 +12,7 @@ struct ErrorBanner: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
             Text(message)
-                .font(.system(size: 11))
+                .font(Theme.font(11))
                 .lineLimit(3)
             Spacer()
             Button {

@@ -78,7 +78,7 @@ struct QuickAddView: View {
                         .fill(suggestion.color)
                         .frame(width: 8, height: 8)
                     Text(suggestion.name)
-                        .font(.system(size: 12))
+                        .font(Theme.font(12))
                     Spacer()
                 }
                 .padding(.horizontal, 8)
@@ -88,7 +88,7 @@ struct QuickAddView: View {
                 .onTapGesture { accept(suggestion) }
             }
             Text("\u{21B9} to complete")
-                .font(.system(size: 9))
+                .font(Theme.font(9))
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 8)
                 .padding(.bottom, 3)

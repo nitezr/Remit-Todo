@@ -11,12 +11,12 @@ struct TaskLabelsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Labels for \(task.title)")
-                .font(.system(size: 13, weight: .semibold))
+                .font(Theme.font(13, .semibold))
                 .lineLimit(2)
 
             if metadataStore.labels.isEmpty {
                 Text("No labels yet. Type below to create one.")
-                    .font(.system(size: 11))
+                    .font(Theme.font(11))
                     .foregroundStyle(.secondary)
             } else {
                 ScrollView {
@@ -27,7 +27,7 @@ struct TaskLabelsSheet: View {
                                     Circle()
                                         .fill(label.color.swiftUIColor)
                                         .frame(width: 9, height: 9)
-                                    Text(label.name).font(.system(size: 12))
+                                    Text(label.name).font(Theme.font(12))
                                 }
                             }
                             .toggleStyle(.checkbox)

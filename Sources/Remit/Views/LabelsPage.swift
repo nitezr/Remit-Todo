@@ -126,7 +126,7 @@ struct LabelsPage: View {
             Spacer()
 
             Text("\(filterCount(filter))")
-                .font(Theme.font(11.5))
+                .font(Theme.font(12))
                 .foregroundStyle(Theme.secondaryText)
                 .monospacedDigit()
         }
@@ -270,7 +270,7 @@ struct LabelsPage: View {
                     .foregroundStyle(Theme.primaryText)
                 Spacer()
                 Text("\(metadataStore.labels(inFolder: folder.id).count)")
-                    .font(Theme.font(11.5))
+                    .font(Theme.font(12))
                     .foregroundStyle(Theme.secondaryText)
                     .monospacedDigit()
             }
@@ -403,7 +403,7 @@ struct LabelsPage: View {
                     .foregroundStyle(Theme.primaryText)
                 Spacer()
                 Text("\(taskCount(label))")
-                    .font(Theme.font(11.5))
+                    .font(Theme.font(12))
                     .foregroundStyle(Theme.secondaryText)
                     .monospacedDigit()
             }
@@ -462,10 +462,10 @@ struct LabelsPage: View {
                 .foregroundStyle(Theme.secondaryText)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(Theme.font(12.5, .semibold))
+                    .font(Theme.font(13, .semibold))
                     .foregroundStyle(Theme.primaryText)
                 Text(body)
-                    .font(Theme.font(11.5))
+                    .font(Theme.font(12))
                     .foregroundStyle(Theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }

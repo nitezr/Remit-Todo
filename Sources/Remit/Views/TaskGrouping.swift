@@ -290,7 +290,15 @@ enum TaskGrouping {
         let target = calendar.startOfDay(for: dueDate)
         let days = calendar.dateComponents([.day], from: today, to: target).day ?? 0
 
-        let time = task.hasDueTime ? " \(dueDate.formatted(.dateTime.hour().minute()))" : ""
+        // Midnight is a date, not a time. Reminders records plenty of ordinary dated tasks at
+        // 00:00 with an hour component, so hasDueTime is true for them -- printing "12:00 AM"
+        // against every one of those is noise, and the same false positive that had the
+        // sleeping-hours filter hiding them.
+        let components = calendar.dateComponents([.hour, .minute], from: dueDate)
+        let isMidnight = components.hour == 0 && (components.minute ?? 0) == 0
+        let time = (task.hasDueTime && !isMidnight)
+            ? " \(dueDate.formatted(.dateTime.hour().minute()))"
+            : ""
 
         switch days {
         case ..<0:

@@ -18,7 +18,7 @@ struct EmojiPickerSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Emoji for \(projectTitle)")
-                .font(.system(size: 13, weight: .semibold))
+                .font(Theme.font(13, .semibold))
 
             HStack(spacing: 8) {
                 TextField("", text: $text, prompt: Text("Paste or pick an emoji"))
@@ -38,7 +38,7 @@ struct EmojiPickerSheet: View {
             }
 
             Text("Only the first character is kept.")
-                .font(.system(size: 10))
+                .font(Theme.font(10))
                 .foregroundStyle(.secondary)
 
             HStack {

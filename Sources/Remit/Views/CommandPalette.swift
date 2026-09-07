@@ -23,7 +23,7 @@ struct CommandPalette: View {
                     .foregroundStyle(.secondary)
                 TextField("Search tasks or jump to a view", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 15))
+                    .font(Theme.font(15))
                     .focused($fieldFocused)
                     .onSubmit(runHighlighted)
                     .onChange(of: query) { highlighted = 0 }
@@ -40,7 +40,7 @@ struct CommandPalette: View {
                     }
                     if results.isEmpty {
                         Text("No matches")
-                            .font(.system(size: 12))
+                            .font(Theme.font(12))
                             .foregroundStyle(.secondary)
                             .padding(12)
                     }
@@ -69,11 +69,11 @@ struct CommandPalette: View {
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(result.title)
-                    .font(.system(size: 13))
+                    .font(Theme.font(13))
                     .lineLimit(1)
                 if let subtitle = result.subtitle {
                     Text(subtitle)
-                        .font(.system(size: 10))
+                        .font(Theme.font(10))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }

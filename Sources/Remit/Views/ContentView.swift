@@ -24,6 +24,9 @@ struct ContentView: View {
     @State private var selection: SidebarSelection? = .today
     @StateObject private var history = NavigationHistory(start: .today)
     @StateObject private var swipeMonitor = SwipeMonitor()
+    /// Read only so the whole hierarchy re-renders when the font setting changes. Theme.font reads
+    /// the value at render time, so without an observer here the switch would need a relaunch.
+    @AppStorage("general.interfaceFont") private var interfaceFont = Theme.InterfaceFont.avenir.rawValue
     /// Shared with the View menu's toggle in RemitApp via AppStorage rather than passed down, so
     /// the menu command and the split view can't drift out of sync -- the Electron build shipped a
     /// sidebar toggle that was "added" but not wired three separate times (ROADMAP.md #76-#78).
@@ -140,7 +143,7 @@ struct ContentView: View {
             ForEach(ShortcutAction.allCases.filter { $0.group == group }) { action in
                 HStack(spacing: 10) {
                     Text(action.title)
-                        .font(Theme.font(12.5))
+                        .font(Theme.font(13))
                     Spacer(minLength: 14)
                     KeyCapRow(bindings: shortcuts.bindings(for: action))
                 }
@@ -151,7 +154,7 @@ struct ContentView: View {
             ) { _, item in
                 HStack(spacing: 10) {
                     Text(item.title)
-                        .font(Theme.font(12.5))
+                        .font(Theme.font(13))
                         .foregroundStyle(Theme.secondaryText)
                     Spacer(minLength: 14)
                     KeyCap(text: item.keys)

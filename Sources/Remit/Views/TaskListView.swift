@@ -182,7 +182,7 @@ struct TaskListView: View {
                 ForEach(sections) { section in
                     if let gap = section.gapLabel {
                         Text(gap)
-                            .font(.system(size: 11))
+                            .font(Theme.font(11))
                             .foregroundStyle(.tertiary)
                             .listRowSeparator(.hidden)
                     }

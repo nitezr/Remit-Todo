@@ -77,12 +77,12 @@ struct ShortcutsSettings: View {
             HStack(spacing: 8) {
                 if let note {
                     Text(note)
-                        .font(Theme.font(10.5))
+                        .font(Theme.font(11))
                         .foregroundStyle(Theme.secondaryText)
                         .lineLimit(2)
                 } else {
                     Text("Click a shortcut to record a new key. Esc cancels.")
-                        .font(Theme.font(10.5))
+                        .font(Theme.font(11))
                         .foregroundStyle(Theme.secondaryText)
                 }
                 Spacer()
@@ -111,7 +111,7 @@ struct ShortcutsSettings: View {
         let isRecording = recordingAction == action
         return HStack(spacing: 10) {
             Text(action.title)
-                .font(Theme.font(12.5))
+                .font(Theme.font(13))
                 .foregroundStyle(Theme.primaryText)
             Spacer(minLength: 12)
 
@@ -121,7 +121,7 @@ struct ShortcutsSettings: View {
                     note = "\(action.title) restored to its default."
                 } label: {
                     Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 9.5))
+                        .font(.system(size: 10))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.secondaryText)
@@ -157,12 +157,12 @@ struct ShortcutsSettings: View {
     private func fixedRow(keys: String, title: String) -> some View {
         HStack(spacing: 10) {
             Text(title)
-                .font(Theme.font(12.5))
+                .font(Theme.font(13))
                 .foregroundStyle(Theme.secondaryText)
             Spacer(minLength: 12)
             KeyCap(text: keys)
             Text("fixed")
-                .font(Theme.font(9.5))
+                .font(Theme.font(10))
                 .foregroundStyle(Theme.secondaryText.opacity(0.7))
         }
         .padding(.vertical, 3.5)
@@ -174,6 +174,7 @@ struct GeneralSettings: View {
     @AppStorage("general.sleepStartHour") private var sleepStartHour = 22
     @AppStorage("general.sleepEndHour") private var sleepEndHour = 8
     @AppStorage("general.completionSound") private var completionSound = true
+    @AppStorage("general.interfaceFont") private var interfaceFont = Theme.InterfaceFont.avenir.rawValue
 
     var body: some View {
         Form {
@@ -188,6 +189,19 @@ struct GeneralSettings: View {
                     ForEach(0..<24, id: \.self) { Text(Self.hourLabel($0)).tag($0) }
                 }
                 .disabled(!hideSleepingHours)
+            }
+
+            Section("Appearance") {
+                Picker("Interface font", selection: $interfaceFont) {
+                    ForEach(Theme.InterfaceFont.allCases) { Text($0.label).tag($0.rawValue) }
+                }
+                Text("""
+                    Avenir Next matches Todoist's look but has a smaller x-height, so it reads a \
+                    size down at the 10-13pt most of this interface uses. SF is drawn for that \
+                    range and is usually crisper on screen.
+                    """)
+                    .font(Theme.font(11))
+                    .foregroundStyle(Theme.secondaryText)
             }
 
             Section("Feedback") {
@@ -214,19 +228,19 @@ struct DataSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Remit layer")
-                .font(.system(size: 13, weight: .semibold))
+                .font(Theme.font(13, .semibold))
             Text("""
                 Labels, sections, favourites, sub-project nesting, and project emoji are stored by \
                 Remit, because Apple Reminders has nowhere to put them. Your tasks and lists always \
                 live in Reminders and are never stored here.
                 """)
-                .font(.system(size: 11))
+                .font(Theme.font(11))
                 .foregroundStyle(.secondary)
 
             Button("Reset Remit Data...", role: .destructive) { confirming = true }
 
             Text("This deletes the Remit layer only. Every task and list stays in Apple Reminders.")
-                .font(.system(size: 10))
+                .font(Theme.font(10))
                 .foregroundStyle(.secondary)
 
             Spacer()

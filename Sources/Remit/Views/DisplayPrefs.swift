@@ -183,7 +183,7 @@ struct DisplayMenu: View {
                 Text("Display")
                 if activeCount > 0 {
                     Text("\(activeCount)")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(Theme.font(10, .semibold))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(Capsule().fill(Color.secondary.opacity(0.2)))
@@ -200,7 +200,7 @@ struct DisplayMenu: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Layout")
-                .font(.system(size: 13, weight: .semibold))
+                .font(Theme.font(13, .semibold))
 
             Picker("", selection: $layout) {
                 ForEach(TaskLayout.allCases) { option in
@@ -216,7 +216,7 @@ struct DisplayMenu: View {
             Divider()
 
             Text("Sort")
-                .font(.system(size: 13, weight: .semibold))
+                .font(Theme.font(13, .semibold))
             row("Grouping", changed: groupBy != .default) {
                 Picker("", selection: $groupBy) {
                     ForEach(TaskGroupBy.allCases) { Text($0.label).tag($0) }
@@ -231,7 +231,7 @@ struct DisplayMenu: View {
             Divider()
 
             Text("Filter")
-                .font(.system(size: 13, weight: .semibold))
+                .font(Theme.font(13, .semibold))
             row("Deadline", changed: deadline != .all) {
                 Picker("", selection: $deadline) {
                     ForEach(DeadlineFilter.allCases) { Text($0.label).tag($0) }

@@ -14,20 +14,51 @@ enum Theme {
 
     // MARK: - Type scale
 
+    /// Which family the interface renders in.
+    ///
+    /// Avenir Next was chosen for Todoist's look (#12), but its x-height is about 11% smaller than
+    /// the system face -- 6.08pt against 6.84pt at size 13 -- so it reads a size down and looks
+    /// thin at the 10-13pt this UI mostly lives in. SF is drawn for exactly that range. Rather
+    /// than overturn a deliberate design decision, both are offered and the difference is visible
+    /// side by side in Settings.
+    enum InterfaceFont: String, CaseIterable, Identifiable {
+        case avenir, system
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .avenir: return "Avenir Next"
+            case .system: return "System (SF)"
+            }
+        }
+    }
+
+    static var family: InterfaceFont {
+        InterfaceFont(rawValue: UserDefaults.standard.string(forKey: "general.interfaceFont") ?? "")
+            ?? .avenir
+    }
+
     static func font(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        .custom("Avenir Next", size: size).weight(weight)
+        switch family {
+        case .avenir:
+            // The smaller x-height is compensated below 14pt, where it costs legibility rather
+            // than character. Whole points only: a fractional size lands off the pixel grid and
+            // renders softer, which is most of why small text looked muddy.
+            return .custom("Avenir Next", size: size < 14 ? size + 1 : size).weight(weight)
+        case .system:
+            return .system(size: size, weight: weight)
+        }
     }
 
     /// Avenir Next has a smaller x-height than the system face, so matching Todoist's *apparent*
     /// size means setting a point size a little above what SF would need. These were raised after
     /// the first pass read too small on screen.
     static var taskTitle: Font { font(15) }
-    static var taskNotes: Font { font(12.5) }
-    static var taskMeta: Font { font(11.5) }
+    static var taskNotes: Font { font(13) }
+    static var taskMeta: Font { font(12) }
     static var sectionHeader: Font { font(14, .semibold) }
     static var sidebarRow: Font { font(14) }
     static var sidebarHeader: Font { font(12, .semibold) }
-    static var cardTitle: Font { font(14.5) }
+    static var cardTitle: Font { font(15) }
     static var viewTitle: Font { font(21, .bold) }
 
     // MARK: - Colour

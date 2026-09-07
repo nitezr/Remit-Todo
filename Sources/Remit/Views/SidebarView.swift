@@ -441,10 +441,10 @@ private struct SidebarFooterButton: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 12.5))
+                    .font(.system(size: 13))
                 if let label {
                     Text(label)
-                        .font(Theme.font(12.5))
+                        .font(Theme.font(13))
                 }
             }
             .foregroundStyle(hovering ? Theme.primaryText : Theme.secondaryText)
