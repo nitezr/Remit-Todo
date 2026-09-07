@@ -49,7 +49,8 @@ struct TaskListView: View {
                     },
                     // Only the date-driven views get the big header; a project board already has
                     // its name in the window title, and a month line under it would be meaningless.
-                    boardTitle: selection == .upcoming ? "Upcoming" : nil
+                    boardTitle: selection == .upcoming ? "Upcoming" : nil,
+                    onRescheduleAll: rescheduleAll
                 )
             case .calendar:
                 CalendarView(
@@ -808,6 +809,27 @@ struct TaskListView: View {
             try remindersService.setDueDate(previous, for: task)
         }
         perform { try remindersService.setDueDate(target.date, for: task) }
+    }
+
+    /// Moves every task in a column at once. One undo entry covers the whole batch and restores
+    /// each task's own previous date -- a bulk edit you cannot take back in one step is worse than
+    /// no bulk edit, since the dates it overwrote are exactly the information you would need to
+    /// put them back by hand.
+    private func rescheduleAll(in section: TaskGrouping.Section, to target: ScheduleTarget) {
+        let tasks = section.tasks
+        guard !tasks.isEmpty else { return }
+        let previous = tasks.map { ($0, $0.dueDate) }
+
+        remindersService.recordUndo("reschedule \(tasks.count) task\(tasks.count == 1 ? "" : "s")") {
+            for (task, date) in previous {
+                try remindersService.setDueDate(date, for: task)
+            }
+        }
+        perform {
+            for task in tasks {
+                try remindersService.setDueDate(target.date, for: task)
+            }
+        }
     }
 
     private func deleteSelected() {

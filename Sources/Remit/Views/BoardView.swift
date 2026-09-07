@@ -26,6 +26,9 @@ struct BoardView: View {
     /// Title shown above the columns. Nil renders the board with no header at all, which is what a
     /// project board wants -- its name is already in the window title.
     var boardTitle: String?
+    /// Bulk-moves every task in a column to a new date. Offered only on Overdue, where a pile of
+    /// stale dates is the normal state and moving them one at a time is the whole problem.
+    var onRescheduleAll: ((TaskGrouping.Section, ScheduleTarget) -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -183,6 +186,23 @@ struct BoardView: View {
                     .foregroundStyle(Theme.secondaryText)
                     .monospacedDigit()
                 Spacer(minLength: 0)
+
+                if section.isOverdue, !section.tasks.isEmpty, let onRescheduleAll {
+                    Menu("Reschedule") {
+                        Button("Today") { onRescheduleAll(section, .today) }
+                        Button("Tomorrow") { onRescheduleAll(section, .tomorrow) }
+                        Button("This Weekend") { onRescheduleAll(section, .weekend) }
+                        Button("Next Week") { onRescheduleAll(section, .nextWeek) }
+                        Divider()
+                        Button("Remove Due Date") { onRescheduleAll(section, ScheduleTarget.none) }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .font(Theme.font(12))
+                    .foregroundStyle(Theme.accent)
+                    .help("Move all \(section.tasks.count) overdue tasks to a new date")
+                }
             }
             .padding(.horizontal, 2)
             .contextMenu { sectionContextMenu(section) }
