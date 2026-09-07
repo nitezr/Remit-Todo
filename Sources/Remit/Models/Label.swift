@@ -17,6 +17,17 @@ struct RemitLabel: Identifiable, Hashable, Codable {
     var name: String
     var color: LabelColor
     var order: Int
+    /// Owning folder, or nil for unfiled. Optional so a file written before folders existed still
+    /// decodes -- Swift's synthesised decoder tolerates a missing key only for optionals.
+    var folderID: String?
+}
+
+/// A group of labels. Purely organisational: a folder holds no tasks of its own and filtering by a
+/// folder is not a thing, which is why it carries no criteria.
+struct LabelFolder: Identifiable, Hashable, Codable {
+    let id: String
+    var name: String
+    var order: Int
 }
 
 enum LabelColor: String, CaseIterable, Codable {

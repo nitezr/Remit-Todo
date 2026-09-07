@@ -21,12 +21,13 @@ struct RemitMetadata: Codable {
     var labelAssignments: [String: [String]] = [:]
     var templates: [ProjectTemplate] = []
     var filters: [SavedFilter] = []
+    var labelFolders: [LabelFolder] = []
 }
 
 extension RemitMetadata {
     enum CodingKeys: String, CodingKey {
         case schemaVersion, projects, tasks, sections, favoriteProjectIDs
-        case labels, labelAssignments, templates, filters
+        case labels, labelAssignments, templates, filters, labelFolders
     }
 
     /// Decoded field by field with defaults, rather than by the synthesised initialiser, which
@@ -51,6 +52,7 @@ extension RemitMetadata {
         labelAssignments = try container.decodeIfPresent([String: [String]].self, forKey: .labelAssignments) ?? [:]
         templates = try container.decodeIfPresent([ProjectTemplate].self, forKey: .templates) ?? []
         filters = try container.decodeIfPresent([SavedFilter].self, forKey: .filters) ?? []
+        labelFolders = try container.decodeIfPresent([LabelFolder].self, forKey: .labelFolders) ?? []
     }
 }
 
@@ -371,6 +373,93 @@ final class MetadataStore: ObservableObject {
         data.filters.append(filter)
         persist()
         return filter
+    }
+
+    /// Replaces a filter in place, keeping its position so editing one does not reorder the list.
+    func updateFilter(_ filter: SavedFilter) {
+        guard let index = data.filters.firstIndex(where: { $0.id == filter.id }) else { return }
+        data.filters[index] = filter
+        persist()
+    }
+
+    // MARK: - Label folders
+
+    var labelFolders: [LabelFolder] {
+        data.labelFolders.sorted { $0.order < $1.order }
+    }
+
+    func labels(inFolder folderID: String?) -> [RemitLabel] {
+        data.labels.filter { $0.folderID == folderID }.sorted { $0.order < $1.order }
+    }
+
+    @discardableResult
+    func addLabelFolder(name: String) -> LabelFolder {
+        let folder = LabelFolder(
+            id: UUID().uuidString,
+            name: name,
+            order: (data.labelFolders.map(\.order).max() ?? -1) + 1
+        )
+        data.labelFolders.append(folder)
+        persist()
+        return folder
+    }
+
+    func renameLabelFolder(_ folderID: String, to name: String) {
+        guard let index = data.labelFolders.firstIndex(where: { $0.id == folderID }) else { return }
+        data.labelFolders[index].name = name
+        persist()
+    }
+
+    /// Deleting a folder never deletes the labels in it -- they become unfiled, and the tasks
+    /// carrying them are untouched. A folder is organisation, not ownership.
+    func removeLabelFolder(_ folderID: String) {
+        data.labelFolders.removeAll { $0.id == folderID }
+        for index in data.labels.indices where data.labels[index].folderID == folderID {
+            data.labels[index].folderID = nil
+        }
+        persist()
+    }
+
+    func setFolder(_ folderID: String?, forLabel labelID: String) {
+        guard let index = data.labels.firstIndex(where: { $0.id == labelID }) else { return }
+        data.labels[index].folderID = folderID
+        // Land at the end of the destination rather than wherever its old order happened to put it.
+        data.labels[index].order = (labels(inFolder: folderID).map(\.order).max() ?? -1) + 1
+        persist()
+    }
+
+    /// Moves `labelID` to sit directly after `targetID`, within the target's folder. Orders are
+    /// renumbered densely afterwards so repeated drags cannot drift into ties.
+    func moveLabel(_ labelID: String, after targetID: String) {
+        guard labelID != targetID,
+              let target = data.labels.first(where: { $0.id == targetID }),
+              let moving = data.labels.firstIndex(where: { $0.id == labelID }) else { return }
+        data.labels[moving].folderID = target.folderID
+
+        var ordered = labels(inFolder: target.folderID).filter { $0.id != labelID }
+        let insertAt = (ordered.firstIndex { $0.id == targetID }.map { $0 + 1 }) ?? ordered.count
+        ordered.insert(data.labels[moving], at: insertAt)
+        for (position, label) in ordered.enumerated() {
+            if let index = data.labels.firstIndex(where: { $0.id == label.id }) {
+                data.labels[index].order = position
+            }
+        }
+        persist()
+    }
+
+    func moveLabelFolder(_ folderID: String, by offset: Int) {
+        var ordered = labelFolders
+        guard let from = ordered.firstIndex(where: { $0.id == folderID }) else { return }
+        let to = min(max(from + offset, 0), ordered.count - 1)
+        guard to != from else { return }
+        let folder = ordered.remove(at: from)
+        ordered.insert(folder, at: to)
+        for (position, f) in ordered.enumerated() {
+            if let index = data.labelFolders.firstIndex(where: { $0.id == f.id }) {
+                data.labelFolders[index].order = position
+            }
+        }
+        persist()
     }
 
     func removeFilter(_ filterID: String) {

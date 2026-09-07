@@ -18,6 +18,12 @@ struct LabelsPage: View {
     @State private var newLabelName = ""
     @State private var renamingID: String?
     @State private var draftName = ""
+    @State private var editingFilter: SavedFilter?
+    @State private var creatingFilter = false
+    @State private var newFolderName = ""
+    @State private var addingFolder = false
+    /// Collapsed folder ids, comma-joined -- AppStorage cannot hold a Set and the list is short.
+    @AppStorage("labels.collapsedFolders") private var collapsedFolders = ""
 
     var body: some View {
         ScrollView {
@@ -32,6 +38,12 @@ struct LabelsPage: View {
         .background(Theme.pageBackground)
         .navigationTitle("Filters & Labels")
         .navigationSubtitle(subtitle)
+        .sheet(isPresented: $creatingFilter) {
+            FilterEditorSheet(existing: nil) { creatingFilter = false }
+        }
+        .sheet(item: $editingFilter) { filter in
+            FilterEditorSheet(existing: filter) { editingFilter = nil }
+        }
     }
 
     private var subtitle: String {
@@ -47,31 +59,48 @@ struct LabelsPage: View {
             sectionHeader("Filters", count: metadataStore.filters.count)
 
             if metadataStore.filters.isEmpty {
-                // An empty list with no explanation is a dead end -- filters can only be created
-                // from a view's own Display menu, and nothing else on this page says so.
                 emptyState(
                     icon: "line.3.horizontal.decrease.circle",
                     title: "No saved filters",
                     body: """
-                        A filter is a saved set of view options. Open any view, set the deadline, \
-                        priority or label options in the Display menu, then choose Save as Filter. \
-                        It appears here and in the sidebar.
+                        A filter is a saved set of criteria — a deadline, a priority, a label, a \
+                        project — that becomes its own view in the sidebar. Create one below, or \
+                        save the options you already have set from any view's Display menu.
                         """
                 )
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(metadataStore.filters.enumerated()), id: \.element.id) { index, filter in
-                        if index > 0 { Divider().overlay(Theme.separator) }
-                        filterRow(filter)
-                    }
-                }
-                .background(
-                    RoundedRectangle(cornerRadius: 10).fill(Theme.cardBackground)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.separator, lineWidth: 1)
-                )
             }
+
+            VStack(spacing: 0) {
+                ForEach(Array(metadataStore.filters.enumerated()), id: \.element.id) { index, filter in
+                    if index > 0 { Divider().overlay(Theme.separator) }
+                    filterRow(filter)
+                }
+                if !metadataStore.filters.isEmpty { Divider().overlay(Theme.separator) }
+                // The page is where people look for this; the Display menu route stays, but it is
+                // no longer the only one, and it was disabled exactly when you had nothing yet.
+                Button { creatingFilter = true } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.secondaryText)
+                            .frame(width: 18)
+                        Text("New filter")
+                            .font(Theme.font(13))
+                            .foregroundStyle(Theme.secondaryText)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 10).fill(Theme.cardBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.separator, lineWidth: 1)
+            )
         }
     }
 
@@ -107,6 +136,7 @@ struct LabelsPage: View {
         .onTapGesture { selection = .filter(filter.id) }
         .contextMenu {
             Button("Show Tasks") { selection = .filter(filter.id) }
+            Button("Edit Filter...") { editingFilter = filter }
             Button("Delete Filter", role: .destructive) { metadataStore.removeFilter(filter.id) }
         }
     }
@@ -142,7 +172,24 @@ struct LabelsPage: View {
 
     private var labelsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Labels", count: metadataStore.labels.count)
+            HStack(spacing: 7) {
+                Text("Labels")
+                    .font(Theme.font(15, .semibold))
+                    .foregroundStyle(Theme.primaryText)
+                Text("\(metadataStore.labels.count)")
+                    .font(Theme.font(12))
+                    .foregroundStyle(Theme.secondaryText)
+                    .monospacedDigit()
+                Spacer()
+                Button { addingFolder = true } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "folder.badge.plus").font(.system(size: 11))
+                        Text("New folder").font(Theme.font(12))
+                    }
+                    .foregroundStyle(Theme.secondaryText)
+                }
+                .buttonStyle(.plain)
+            }
 
             if metadataStore.labels.isEmpty {
                 emptyState(
@@ -158,10 +205,30 @@ struct LabelsPage: View {
             }
 
             VStack(spacing: 0) {
-                ForEach(Array(metadataStore.labels.enumerated()), id: \.element.id) { index, label in
-                    if index > 0 { Divider().overlay(Theme.separator) }
-                    row(label)
+                if addingFolder { newFolderRow }
+
+                ForEach(metadataStore.labelFolders) { folder in
+                    folderHeader(folder)
+                    if !isCollapsed(folder.id) {
+                        ForEach(metadataStore.labels(inFolder: folder.id)) { label in
+                            Divider().overlay(Theme.separator)
+                            row(label, indented: true)
+                        }
+                    }
+                    Divider().overlay(Theme.separator)
                 }
+
+                // Unfiled labels. Given a header only when folders exist, so it has somewhere to
+                // drag *out* to -- without it a label put in a folder could never leave.
+                if !metadataStore.labelFolders.isEmpty && !metadataStore.labels(inFolder: nil).isEmpty {
+                    unfiledHeader
+                    Divider().overlay(Theme.separator)
+                }
+                ForEach(Array(metadataStore.labels(inFolder: nil).enumerated()), id: \.element.id) { index, label in
+                    if index > 0 { Divider().overlay(Theme.separator) }
+                    row(label, indented: false)
+                }
+
                 if !metadataStore.labels.isEmpty { Divider().overlay(Theme.separator) }
                 newLabelRow
             }
@@ -172,6 +239,121 @@ struct LabelsPage: View {
                 RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.separator, lineWidth: 1)
             )
         }
+    }
+
+    private func folderHeader(_ folder: LabelFolder) -> some View {
+        HStack(spacing: 8) {
+            Button { toggleCollapsed(folder.id) } label: {
+                Image(systemName: isCollapsed(folder.id) ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Theme.secondaryText)
+                    .frame(width: 12)
+            }
+            .buttonStyle(.plain)
+
+            Image(systemName: "folder")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.secondaryText)
+
+            if renamingID == folder.id {
+                TextField("", text: $draftName)
+                    .textFieldStyle(.plain)
+                    .font(Theme.font(13, .semibold))
+                    .onSubmit {
+                        metadataStore.renameLabelFolder(folder.id, to: draftName)
+                        renamingID = nil
+                    }
+                    .onExitCommand { renamingID = nil }
+            } else {
+                Text(folder.name)
+                    .font(Theme.font(13, .semibold))
+                    .foregroundStyle(Theme.primaryText)
+                Spacer()
+                Text("\(metadataStore.labels(inFolder: folder.id).count)")
+                    .font(Theme.font(11.5))
+                    .foregroundStyle(Theme.secondaryText)
+                    .monospacedDigit()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Theme.columnBackground)
+        .contentShape(Rectangle())
+        .dropDestination(for: String.self) { ids, _ in
+            guard let id = ids.first else { return false }
+            metadataStore.setFolder(folder.id, forLabel: id)
+            return true
+        }
+        .contextMenu {
+            Button("Rename Folder") {
+                draftName = folder.name
+                renamingID = folder.id
+            }
+            Button("Move Up") { metadataStore.moveLabelFolder(folder.id, by: -1) }
+            Button("Move Down") { metadataStore.moveLabelFolder(folder.id, by: 1) }
+            // Labels survive their folder; only the grouping goes.
+            Button("Delete Folder", role: .destructive) {
+                metadataStore.removeLabelFolder(folder.id)
+            }
+        }
+    }
+
+    private var unfiledHeader: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "tray")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.secondaryText)
+            Text("Unfiled")
+                .font(Theme.font(12, .semibold))
+                .foregroundStyle(Theme.secondaryText)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Theme.columnBackground)
+        .contentShape(Rectangle())
+        .dropDestination(for: String.self) { ids, _ in
+            guard let id = ids.first else { return false }
+            metadataStore.setFolder(nil, forLabel: id)
+            return true
+        }
+    }
+
+    private var newFolderRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "folder")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.secondaryText)
+                .frame(width: 18)
+            TextField("Folder name", text: $newFolderName)
+                .textFieldStyle(.plain)
+                .font(Theme.font(13))
+                .onSubmit(createFolder)
+                .onExitCommand { addingFolder = false; newFolderName = "" }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+    }
+
+    private func createFolder() {
+        let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            addingFolder = false
+            return
+        }
+        metadataStore.addLabelFolder(name: name)
+        newFolderName = ""
+        addingFolder = false
+    }
+
+    private func isCollapsed(_ id: String) -> Bool {
+        collapsedFolders.split(separator: ",").contains(Substring(id))
+    }
+
+    private func toggleCollapsed(_ id: String) {
+        var ids = collapsedFolders.split(separator: ",").map(String.init)
+        if let index = ids.firstIndex(of: id) { ids.remove(at: index) } else { ids.append(id) }
+        collapsedFolders = ids.joined(separator: ",")
     }
 
     private var newLabelRow: some View {
@@ -189,8 +371,9 @@ struct LabelsPage: View {
         .padding(.vertical, 9)
     }
 
-    private func row(_ label: RemitLabel) -> some View {
+    private func row(_ label: RemitLabel, indented: Bool) -> some View {
         HStack(spacing: 10) {
+            if indented { Spacer().frame(width: 18) }
             Menu {
                 ForEach(LabelColor.allCases, id: \.self) { color in
                     Button {
@@ -229,8 +412,23 @@ struct LabelsPage: View {
         .padding(.vertical, 9)
         .contentShape(Rectangle())
         .onTapGesture { selection = .label(label.id) }
+        .draggable(label.id)
+        // Dropping one label on another reorders within, or moves into, that label's folder.
+        .dropDestination(for: String.self) { ids, _ in
+            guard let id = ids.first else { return false }
+            metadataStore.moveLabel(id, after: label.id)
+            return true
+        }
         .contextMenu {
             Button("Show Tasks") { selection = .label(label.id) }
+            if !metadataStore.labelFolders.isEmpty {
+                Menu("Move to Folder") {
+                    Button("Unfiled") { metadataStore.setFolder(nil, forLabel: label.id) }
+                    ForEach(metadataStore.labelFolders) { folder in
+                        Button(folder.name) { metadataStore.setFolder(folder.id, forLabel: label.id) }
+                    }
+                }
+            }
             Button("Rename") {
                 draftName = label.name
                 renamingID = label.id
