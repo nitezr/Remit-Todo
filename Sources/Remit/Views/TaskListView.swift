@@ -50,7 +50,8 @@ struct TaskListView: View {
                     // Only the date-driven views get the big header; a project board already has
                     // its name in the window title, and a month line under it would be meaningless.
                     boardTitle: selection == .upcoming ? "Upcoming" : nil,
-                    onRescheduleAll: rescheduleAll
+                    onRescheduleAll: rescheduleAll,
+                    taskMenu: { task in taskMenu(task) }
                 )
             case .calendar:
                 CalendarView(
@@ -331,8 +332,60 @@ struct TaskListView: View {
         }
     }
 
+    /// Everything you can do to a task, from the task itself.
+    ///
+    /// A macOS context menu is a vertical list, so Todoist's horizontal date and priority strips
+    /// become submenus rather than icon rows. Shortcut letters are read from ShortcutsStore rather
+    /// than hardcoded, so a remapped key shows its real binding here instead of a stale one -- and
+    /// they are shown as text rather than attached with `.keyboardShortcut`, which would register
+    /// a second handler competing with the key monitor.
     @ViewBuilder
     private func taskMenu(_ task: RemitTask) -> some View {
+        Button("Edit\(hint(.openDetail))") { peekTask = task }
+        if !isProjectView, let project = project(for: task) {
+            Button("Go to \(project.title)") { onNavigate?(.project(project.id)) }
+        }
+
+        Divider()
+
+        Menu("Due Date") {
+            Button("Today\(hint(.scheduleToday))") { reschedule(task, to: .today) }
+            Button("Tomorrow\(hint(.scheduleTomorrow))") { reschedule(task, to: .tomorrow) }
+            Button("This Weekend\(hint(.scheduleWeekend))") { reschedule(task, to: .weekend) }
+            Button("Next Week\(hint(.scheduleNextWeek))") { reschedule(task, to: .nextWeek) }
+            Divider()
+            Button("No Date\(hint(.scheduleClear))") { reschedule(task, to: ScheduleTarget.none) }
+        }
+
+        Menu("Priority") {
+            ForEach(Priority.allCases) { priority in
+                Button {
+                    setPriority(priority, on: task)
+                } label: {
+                    // The flag reads as the colour Todoist uses, and the tick marks the current
+                    // one -- a priority menu that does not say which is set is half a menu.
+                    Label(
+                        priority.label + (task.priority == priority ? " ✓" : ""),
+                        systemImage: "flag.fill"
+                    )
+                }
+            }
+        }
+
+        Button("Labels...\(hint(.editLabels))") { labelSheetTask = task }
+
+        Divider()
+
+        Menu("Move to Project") {
+            ForEach(remindersService.projects) { project in
+                Button(project.title) {
+                    guard project.id != task.projectID else { return }
+                    perform { try remindersService.moveTask(task, toProject: project.id) }
+                }
+                .disabled(project.id == task.projectID)
+            }
+        }
+
         if case .project = selection, !projectSections.isEmpty {
             Menu("Move to Section") {
                 Button("(No section)") { metadataStore.setSection(nil, forTask: task.id) }
@@ -342,8 +395,84 @@ struct TaskListView: View {
                 }
             }
         }
+
+        Button("Duplicate") { duplicate(task) }
+        Button("Copy Title") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(task.title, forType: .string)
+        }
+
+        Divider()
+
+        Button(task.isCompleted ? "Mark Incomplete" : "Complete\(hint(.completeTask))") {
+            remindersService.completeAnimated(task)
+        }
         Button("Delete Task", role: .destructive) {
+            let previous = task
+            remindersService.recordUndo("delete task") {
+                _ = try remindersService.createTask(
+                    title: previous.title,
+                    projectID: previous.projectID,
+                    dueDate: previous.dueDate,
+                    priority: previous.priority,
+                    notes: previous.notes
+                )
+            }
             perform { try remindersService.delete(task) }
+        }
+    }
+
+    /// " (T)" for an action with a single-key binding, empty otherwise. Multi-key or modifier
+    /// chords are left out: they read as noise in a menu item's name.
+    private func hint(_ action: ShortcutAction) -> String {
+        guard let binding = shortcuts.bindings(for: action).first,
+              binding.modifiers == 0,
+              let character = binding.character,
+              character.count == 1 else { return "" }
+        return "  (\(character.uppercased()))"
+    }
+
+    private var isProjectView: Bool {
+        if case .project = selection { return true }
+        return false
+    }
+
+    private func project(for task: RemitTask) -> RemitProject? {
+        remindersService.projects.first { $0.id == task.projectID }
+    }
+
+    private func reschedule(_ task: RemitTask, to target: ScheduleTarget) {
+        let previous = task.dueDate
+        remindersService.recordUndo("reschedule") {
+            try remindersService.setDueDate(previous, for: task)
+        }
+        perform { try remindersService.setDueDate(target.date, for: task) }
+    }
+
+    private func setPriority(_ priority: Priority, on task: RemitTask) {
+        let previous = task.priority
+        remindersService.recordUndo("priority") {
+            try remindersService.setPriority(previous, for: task)
+        }
+        perform { try remindersService.setPriority(priority, for: task) }
+    }
+
+    /// Copies the fields Reminders actually stores. Labels and section live in Remit's own layer,
+    /// so they are copied across separately once the new task has an id.
+    private func duplicate(_ task: RemitTask) {
+        perform {
+            let copy = try remindersService.createTask(
+                title: task.title,
+                projectID: task.projectID,
+                dueDate: task.dueDate,
+                priority: task.priority,
+                notes: task.notes
+            )
+            let labelIDs = metadataStore.labels(forTask: task.id).map(\.id)
+            if !labelIDs.isEmpty { metadataStore.setLabels(labelIDs, forTask: copy.id) }
+            if let sectionID = metadataStore.sectionID(forTask: task.id) {
+                metadataStore.setSection(sectionID, forTask: copy.id)
+            }
         }
     }
 

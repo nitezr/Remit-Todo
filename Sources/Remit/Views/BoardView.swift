@@ -7,7 +7,7 @@ import SwiftUI
 /// on reload (ROADMAP.md #7). This view holds no bucket state of its own: `columns` is derived from
 /// the same `TaskGrouping.Section` list the List layout uses, so a move that changes a task's date
 /// or section is reflected on the next render with nothing to invalidate.
-struct BoardView: View {
+struct BoardView<TaskMenu: View>: View {
     let sections: [TaskGrouping.Section]
     let showsProject: Bool
     /// Board has no List to draw selection for it, so the selected card is highlighted here --
@@ -29,6 +29,9 @@ struct BoardView: View {
     /// Bulk-moves every task in a column to a new date. Offered only on Overdue, where a pile of
     /// stale dates is the normal state and moving them one at a time is the whole problem.
     var onRescheduleAll: ((TaskGrouping.Section, ScheduleTarget) -> Void)?
+    /// The list layout's task menu, reused verbatim. A board card is the same task, so growing a
+    /// second menu here would mean two places to keep in step.
+    @ViewBuilder var taskMenu: (RemitTask) -> TaskMenu
 
     var body: some View {
         VStack(spacing: 0) {
@@ -219,6 +222,7 @@ struct BoardView: View {
                             .id(task.id)
                             .draggable(task.id)
                             .onTapGesture { selectedTaskID = task.id }
+                            .contextMenu { taskMenu(task) }
                         }
 
                         // Overdue is not a destination -- "add a task to Overdue" means nothing.

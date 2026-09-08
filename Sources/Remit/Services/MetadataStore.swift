@@ -163,6 +163,11 @@ final class MetadataStore: ObservableObject {
         }
     }
 
+    /// The section a task belongs to, or nil when it is unsectioned.
+    func sectionID(forTask taskID: String) -> String? {
+        data.tasks[taskID]?.sectionID
+    }
+
     func setSection(_ sectionID: String?, forTask taskID: String) {
         var meta = data.tasks[taskID] ?? TaskMetadata()
         meta.sectionID = sectionID
