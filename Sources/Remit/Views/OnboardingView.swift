@@ -69,7 +69,7 @@ struct OnboardingView: View {
             heading(
                 "checklist",
                 "Welcome to Remit",
-                "A Todoist-style home for Apple Reminders. Everything you do here is a change in Reminders itself, so it syncs to your iPhone, iPad and Mac. Remit keeps no copy of your tasks."
+                "A power-user workspace for Apple Reminders. Everything you do here is a change in Reminders itself, so it syncs to your iPhone, iPad and Mac. Remit keeps no copy of your tasks."
             )
             TourPreview()
             VStack(alignment: .leading, spacing: 10) {

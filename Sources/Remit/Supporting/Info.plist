@@ -23,8 +23,8 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSRemindersFullAccessUsageDescription</key>
-    <string>Remit reads and writes your Reminders lists and tasks to give them a Todoist-style interface.</string>
+    <string>Remit reads and writes your Apple Reminders lists and tasks so you can plan them with boards, a calendar and keyboard shortcuts.</string>
     <key>NSRemindersUsageDescription</key>
-    <string>Remit reads and writes your Reminders lists and tasks to give them a Todoist-style interface.</string>
+    <string>Remit reads and writes your Apple Reminders lists and tasks so you can plan them with boards, a calendar and keyboard shortcuts.</string>
 </dict>
 </plist>

@@ -1,151 +1,201 @@
 # Remit
 
-A native macOS task manager: **Apple Reminders** as the backend, **Todoist** as the interface.
+**A keyboard-first Mac workspace for Apple Reminders.**
 
-Your data lives in the real Reminders database -- no separate store, no sync service, no lock-in.
-Anything you do in Remit shows up in Reminders on your iPhone, and vice versa, **including tags,
-sections and list groups**: those are Reminders' own, read and written in place rather than
-copied into a Remit-side system. What Remit adds is the interface: views, filters, templates,
-and a full keyboard-driven workflow.
+Plan your reminders on boards and a calendar, capture a task in one typed line, and move through
+your day without reaching for the mouse — while every task, tag and section stays in Apple
+Reminders, synced to your iPhone, iPad and Apple Watch as usual.
 
-## Status: v0.3, running
+> [!NOTE]
+> **Remit is vibe-coded.** It is built by directing AI coding tools (Claude Code) rather than by
+> writing each line by hand — partly to find out how far that approach can take a real, native
+> Mac app. It has a test suite, CI on every change and a release pipeline, and it works on real
+> Reminders data. It is also one person's project that relies on a private Apple framework, so
+> expect rough edges and read [Limitations](#limitations) before depending on it.
 
-A ground-up SwiftUI rewrite, replacing an earlier version built on Raycast's Glaze/Electron
-toolchain (see `ROADMAP.md` for the full feature backlog carried over from that build's 79
-rounds of iteration). It builds, runs, and is packaged as a DMG.
+![Upcoming as a board: overdue, today and the coming days as columns you can drag between](docs/images/upcoming-board.png)
 
-What works:
-- EventKit read/write: Reminders lists as projects, reminders as tasks, live refresh
-- Inbox / Today / Upcoming smart views, plus per-project views
-- Three layouts everywhere -- List, Board (kanban), Calendar (day/3-day/week) -- each view
-  remembering its own layout, grouping, sorting and filters
-- Quick add with natural-language parsing, and `#project` / `@tag` autocomplete
-- Apple Reminders' native tags, sections and list groups -- the same ones Reminders.app shows
-- Saved filters, project templates
-- Sidebar with Reminders groups, favourites, emoji and live counts
-- Command palette (⌘K), settings window, keyboard shortcuts, task detail peek
-- `remit-cli`, a separate binary for automation
-- A welcome tour on first launch (Help → Welcome Tour) that explains both permissions and can add
-  a practice list to Reminders
+## Why Remit
 
-Not there yet: drag-and-drop is partial, the MCP server, and the visual pass to fully match
-Todoist. All scoped in `ROADMAP.md`, grouped by priority and cross-referenced to the original
-prompt log.
+Apple Reminders is excellent at *holding* your tasks: it syncs everywhere, works with Siri and
+your Watch, and understands sections, tags, groups and smart lists. Remit doesn't replace it or
+copy your data somewhere else. It is a second window onto the very same Reminders, built for the
+moment you sit down at a Mac to plan — in the same family as power-user Reminders apps like
+GoodTask.
 
-## Architecture
+Keep capturing on your iPhone. Open Remit when it's time to decide what happens this week.
 
-```
-Sources/Remit/
-  RemitApp.swift              entry point, requests Reminders access on launch
-  Models/
-    RemitTask.swift           value type; not an EKReminder
-    RemitProject.swift        value type; not an EKCalendar
-    TaskSection.swift         a Reminders section
-    Label.swift               ReminderTag -- a Reminders tag, identified by name
-    Priority.swift            Todoist P1-P4 <-> EventKit's 0/1-4/5/6-9 scale
-  Services/
-    RemindersService.swift    the only file that imports EventKit; everything above it
-                               works with RemitTask/RemitProject, never EKReminder/EKCalendar
-    MetadataStore.swift       JSON sidecar in ~/Library/Application Support/Remit/ for
-                               presentation only (emoji, order, favourites, filters,
-                               templates) -- deleting it loses no Reminders data
-    StoreWatcher.swift        refreshes when Reminders' store changes underneath Remit
-  Views/
-    ContentView.swift, SidebarView.swift, TaskListView.swift, TaskRowView.swift,
-    QuickAddView.swift, Color+Hex.swift
-Sources/RemindersNative/      read-only SQLite reader for Reminders' tags, sections and groups
-Sources/ReminderKitBridge/    writes for the same, through Apple's private ReminderKit framework
-```
+## What Remit adds
 
-EventKit has no API for tags, sections or list groups, so those two modules go around it the way
-[RemCTL](https://github.com/viticci/remctl) does: reads come straight from Reminders' own store,
-and writes go through ReminderKit -- the framework Reminders.app itself uses -- so Reminders'
-daemon still owns sync and schema and Remit never writes SQLite. EventKit identifiers are
-ReminderKit identifiers, so the two join without a mapping table.
+### A board for any view
 
-The trade-off is that ReminderKit is private. A macOS update can change it; the bridge checks
-every selector before calling it and reports an error rather than crashing, but the feature can
-still stop working until Remit is updated. It is also why Remit cannot ship on the App Store.
+Upcoming becomes a column per day; drag a card to another day to reschedule it. A list's sections
+become columns; drag a card to move it between them. Any view can also be grouped into columns by
+priority, tag or list, and the Overdue column reschedules everything in it in one step.
 
-The split matters: `RemindersService` is the single seam between Remit and EventKit. A prior
-build of this app (see `ROADMAP.md` "Known traps") had Today/Upcoming counts drift from what
-Reminders.app itself showed, because date logic was duplicated per-view. Here, `isDueToday` /
-`isOverdue` live once, on `RemitTask`, and every view filters through them.
+![A Reminders list shown as a board, one column per section](docs/images/project-sections.png)
 
-## Building
+### A calendar for your reminders
 
-This is a Swift Package, not an `.xcodeproj` -- open `Package.swift` directly in Xcode
-(File > Open), or from Terminal:
+Day, 3-day, week and month layouts of the tasks you're looking at, inside the same window. Drop a
+task on a day to move it there.
 
-```
-swift build
-swift run
-```
+![The month layout, with reminders placed on their due days](docs/images/calendar-month.png)
 
-Requires macOS 14+ and Xcode 15+. First launch prompts for Reminders access
-(`NSRemindersFullAccessUsageDescription` in `Sources/Remit/Supporting/Info.plist`).
+### Capture in one line
 
-Tags, sections and groups also need **Full Disk Access**, because Reminders' store sits in a
-protected group container. macOS has no prompt for that one: add Remit under System Settings ›
-Privacy & Security › Full Disk Access, then reopen it. Until then Remit works as before, shows a
-banner saying what is missing, and refuses tag and section edits rather than writing them blind.
-The grant is tied to the app's signature, so use `./setup-signing.sh` once -- an ad-hoc signed
-build changes identity every time it is rebuilt and loses the grant.
+Type `Call Priya tomorrow 5pm p1 @Priya👤` and Remit sets the date, time, priority and tag at once;
+add `#List` to file it and `every monday` to make it repeat. Lists and tags autocomplete as you
+type, emoji and all.
 
-## Roadmap
+![Quick add suggesting a tag while the task is typed](docs/images/quick-add.png)
 
-See `ROADMAP.md` for the full backlog, organized P0 (core loop) through P2 (nice-to-have),
-distilled from the previous build's complete prompt history.
+### Everything about a task on one row
+
+Today and Upcoming show each task's notes, due date and time, tags and list together, so you can
+decide what to do next without opening anything.
+
+![Today: overdue and today's tasks with tags, notes and lists on each row](docs/images/today-list.png)
+
+### Details, one key away
+
+Press `I` or Return to edit title, notes, date, repeat, priority, tags and section, and step to
+the previous or next task without closing the panel.
+
+![The task details panel](docs/images/task-details.png)
+
+### Saved filters, and Reminders' own tags
+
+Save a filter by deadline, priority, tag and list, and it becomes a view in the sidebar with a
+live count. Tags are the same ones Reminders shows — rename one or remove it from every task in
+one place, and the change syncs everywhere.
+
+![Filters and tags, with saved filters and live counts](docs/images/filters-and-tags.png)
+
+### Built for the keyboard
+
+Every everyday action is a single key, and every key can be changed in Settings.
+
+| Key | Action | Key | Action |
+| --- | --- | --- | --- |
+| `Q` or `A` | Quick add | `T` | Due today |
+| `E` | Complete | `U` or `M` | Due tomorrow |
+| `J` / `K` or `↓` / `↑` | Next / previous task | `W` | Due this weekend |
+| `I` or Return | Open details | `N` | Due next week |
+| `L` | Edit tags | `0` | Remove the due date |
+| `1` – `4` | Priority | `⌘K` | Jump to any list or task |
+| `⌘Z` | Undo | `⌘[` / `⌘]` | Back / forward (or swipe) |
+
+### A guided first launch
+
+A short tour explains both permissions Remit asks for and why, and can add a small practice list
+to Reminders that teaches each feature by doing it.
+
+![The welcome tour](docs/images/welcome-tour.png)
+
+## Remit and Apple Reminders
+
+Remit works on top of Reminders, so this isn't a contest: Reminders is where your tasks live, on
+every device. The table is what each one offers on a Mac, including what Reminders does better.
+Compared against Reminders on macOS 26.
+
+| | Apple Reminders | Remit |
+| --- | --- | --- |
+| **Your data** | | |
+| Tasks, lists, tags, sections and list groups | ✓ | ✓ The same data, read and written in place |
+| Syncs to iPhone, iPad and Apple Watch | ✓ | ✓ Through Reminders |
+| **Planning** | | |
+| Today and scheduled views | ✓ Today, Scheduled | ✓ Today, Upcoming |
+| Board of columns | ✓ Per list, by section | ✓ Any view: by day, section, priority, tag or list |
+| Calendar layout in the app | — Reminders appear in the Calendar app | ✓ Day, 3 days, week, month; drag to reschedule |
+| Group a view by priority, tag or list | Partial — Today and Scheduled group by time | ✓ Any view |
+| Sort, manual order, show completed | ✓ | ✓ |
+| Reschedule everything overdue at once | ✓ To today | ✓ To today, tomorrow, the weekend or next week |
+| **Capture** | | |
+| Add a task from anywhere | ✓ Quick Reminder, Siri | — Inside Remit's window |
+| List, tags, priority, date, time and repeat in one typed line | Partial — `#tags` in the title | ✓ |
+| **Organising** | | |
+| Saved filters | ✓ Smart lists — also by location, flag and time | ✓ By deadline, priority, tag and list |
+| Rename or remove a tag everywhere | ✓ | ✓ |
+| Templates | ✓ Whole lists, with their reminders | Partial — a list's sections |
+| Subtasks | ✓ | — Shown as ordinary tasks |
+| Flags, early and urgent alerts, locations, assignees, grocery sorting, images | ✓ | — Not shown or editable in Remit |
+| **Speed** | | |
+| Single-key actions, remappable | — | ✓ |
+| Jump to any list or task | Partial — search | ✓ `⌘K` |
+| Back and forward through where you've been | — | ✓ Keys or trackpad swipe |
+| **Everywhere else** | | |
+| iPhone, iPad, Apple Watch, Siri, widgets | ✓ | — Mac only |
+| Automation | ✓ Shortcuts, AppleScript | ✓ A JSON command-line tool |
+| Cost | Included with macOS | Free and open source (MIT) |
 
 ## Install
 
-Download the DMG from [Releases](https://github.com/nitezr/Remit-Todo/releases), open
-it, and drag Remit to Applications. Or build one yourself:
+Requires macOS 14 or later and Apple Reminders.
+
+1. Download the DMG from [Releases](https://github.com/nitezr/Remit-Todo/releases) and drag Remit
+   to Applications.
+2. The first time, **right-click Remit and choose Open**. Remit isn't notarized yet, so a plain
+   double-click is blocked (or run `xattr -dr com.apple.quarantine /Applications/Remit.app`).
+3. Follow the welcome tour:
+   - **Reminders access**, requested by macOS, lets Remit read and write your lists and tasks.
+   - **Full Disk Access** is needed for tags, sections and list groups, because Apple's public
+     Reminders API doesn't include them and Remit reads them from Reminders' own database. macOS
+     has no prompt for this one: add Remit under System Settings › Privacy & Security › Full Disk
+     Access, then reopen Remit. Without it Remit still works, just without tags and sections.
+
+To remove Remit completely — app, settings and both permissions — run `./uninstall.sh` from a copy
+of this repository. Your reminders are never touched.
+
+## Try it without your data
+
+Demo mode opens Remit on a made-up workspace and never reads or writes your Reminders. Quit Remit
+first, then:
 
 ```
-./release.sh 0.3.0 --install
+open -n /Applications/Remit.app --args --demo 1
 ```
 
-**Ad-hoc signed, not notarized.** A DMG you build runs fine on the machine that built it. One
-you *download* is quarantined by macOS until you right-click Remit and choose Open, or run
-`xattr -dr com.apple.quarantine /Applications/Remit.app`. Fixing that properly needs a paid
-Apple Developer ID; `release.sh` switches to a hardened-runtime Developer ID signature
-automatically once one is present. See `CONTRIBUTING.md`.
+Every screenshot above comes from demo mode, regenerated with `scripts/screenshots.sh`.
 
-Still to come: notarization, and Sparkle for in-app auto-updates.
+## Limitations
 
-### Uninstall
-
-```
-./uninstall.sh
-```
-
-Quits Remit, moves the app, its settings file and its preferences to the Trash, and resets its
-Reminders and Full Disk Access permissions, so the next install starts from the welcome tour again.
-Your tasks, lists, tags and sections live in Apple Reminders and are not touched.
+- **Private framework.** Tags, sections and list groups are changed through ReminderKit, the private
+  framework Reminders.app itself uses (the approach [RemCTL](https://github.com/viticci/remctl)
+  pioneered). A macOS update can break that until Remit is updated, and it is why Remit can't be on
+  the App Store.
+- **Full Disk Access** is needed to see tags, sections and groups.
+- **Not notarized**, so macOS warns on first launch.
+- **Mac only.** Subtasks appear as ordinary tasks, and Remit doesn't show or edit flags, locations,
+  early and urgent alerts, assignees or images — use Reminders for those.
+- **Vibe-coded, one maintainer.** Bugs are likely; issues are welcome.
 
 ## Your data
 
-Remit is a view over Apple Reminders and has never stored a task or a list. Tasks, lists, due
-dates, priorities, tags, sections and list groups live in Apple Reminders and sync through iCloud
-like always.
-
-The only thing Remit keeps of its own is presentation Reminders has nowhere to put -- saved
-filters, templates, project emoji, sidebar order, favourites -- in
-`~/Library/Application Support/Remit/metadata.json`. Deleting that file costs you none of your
-tasks, tags or sections. (Before v0.3 Remit kept its own labels, sections and nesting there too;
-those are dropped from the file on the first save after upgrading.)
-
-That file is defended: every write keeps the previous copy as `metadata.backup.json`, a file
-that won't decode is moved aside rather than overwritten and the backup restored, and anything
-unusual is reported in a banner instead of being swallowed. Adding a field to the format cannot
-invalidate an older file. `CONTRIBUTING.md` has the details and the backup command.
+Remit never stores a task, list, tag or section — those live in Apple Reminders and sync through
+iCloud like always. Remit keeps only presentation choices Reminders has nowhere to put (saved
+filters, templates, list emoji, sidebar order, favourites) in
+`~/Library/Application Support/Remit/metadata.json`, with a backup copy on every save. Deleting
+that file costs you none of your reminders.
 
 ## Development
 
-`./run.sh` to build and launch, `swift test` for the suite, `git tag vX.Y.Z && git push --tags`
-to cut a release. CI builds and tests every push and smoke-tests the DMG. See
-`CONTRIBUTING.md`.
+```
+swift build
+swift test
+```
+
+`./run.sh` builds and launches a development copy. See [docs/architecture.md](docs/architecture.md)
+for how Remit talks to Reminders, and [CONTRIBUTING.md](CONTRIBUTING.md) for signing, releases and
+data safety.
+
+## Credits
+
+- [RemCTL](https://github.com/viticci/remctl), whose reverse-engineered ReminderKit calls showed how
+  to read and write Reminders' tags and sections.
+- Built with [Claude Code](https://claude.com/claude-code).
+
+Remit is not affiliated with or endorsed by Apple.
 
 ## License
 

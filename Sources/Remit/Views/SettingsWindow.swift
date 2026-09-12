@@ -196,7 +196,7 @@ struct GeneralSettings: View {
                     ForEach(Theme.InterfaceFont.allCases) { Text($0.label).tag($0.rawValue) }
                 }
                 Text("""
-                    Avenir Next matches Todoist's look but has a smaller x-height, so it reads a \
+                    Avenir Next is rounder and lighter, but has a smaller x-height, so it reads a \
                     size down at the 10-13pt most of this interface uses. SF is drawn for that \
                     range and is usually crisper on screen.
                     """)
@@ -219,8 +219,8 @@ struct GeneralSettings: View {
     }
 }
 
-/// Disconnect / start fresh (#36). Wipes only Remit's own layer -- labels, sections, favourites,
-/// nesting, emoji -- and never touches a single reminder.
+/// Disconnect / start fresh (#36). Wipes only Remit's own layer -- favourites, emoji, order,
+/// filters, templates -- and never touches a single reminder, tag or section.
 struct DataSettings: View {
     @EnvironmentObject private var metadataStore: MetadataStore
     @State private var confirming = false
@@ -230,9 +230,9 @@ struct DataSettings: View {
             Text("Remit layer")
                 .font(Theme.font(13, .semibold))
             Text("""
-                Labels, sections, favourites, sub-project nesting, and project emoji are stored by \
-                Remit, because Apple Reminders has nowhere to put them. Your tasks and lists always \
-                live in Reminders and are never stored here.
+                Favourites, project emoji, sidebar order, saved filters and templates are stored by \
+                Remit, because Apple Reminders has nowhere to put them. Tasks, lists, tags and \
+                sections always live in Reminders and are never stored here.
                 """)
                 .font(Theme.font(11))
                 .foregroundStyle(.secondary)

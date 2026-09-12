@@ -57,14 +57,20 @@ jobs:
 
             Download the DMG, open it, and drag Remit to Applications.
 
-            **This build is ad-hoc signed, not notarized.** macOS blocks downloaded apps that
-            are not notarized, so on first launch you need to either right-click Remit and
-            choose **Open**, or run:
+            **Not notarized yet.** macOS blocks downloaded apps that aren't notarized, so the first
+            time, right-click Remit and choose **Open**, or run:
 
             ```
             xattr -dr com.apple.quarantine /Applications/Remit.app
             ```
 
-            Notarizing properly needs a paid Apple Developer ID; until then this step is
-            unavoidable. Remit asks for Reminders access on first launch — your tasks live in
-            Apple Reminders, and Remit stores nothing but its own display metadata.
+            ## Permissions
+
+            - **Reminders**: macOS asks on first launch. Remit reads and writes your lists and tasks
+              through Apple Reminders.
+            - **Full Disk Access**, for tags, sections and list groups: add Remit under System Settings
+              › Privacy & Security › Full Disk Access, then reopen it. The welcome tour walks through
+              it; without it Remit works, just without tags and sections.
+
+            Remit keeps no copy of your tasks. Its own settings file holds only presentation choices:
+            favourites, list emoji, sidebar order, saved filters and templates.
