@@ -14,8 +14,6 @@ struct SettingsWindow: View {
                     .tabItem { Label("Shortcuts", systemImage: "keyboard") }
                 GeneralSettings()
                     .tabItem { Label("General", systemImage: "gearshape") }
-                AutomationSettings()
-                    .tabItem { Label("Automation", systemImage: "terminal") }
                 DataSettings()
                     .tabItem { Label("Data", systemImage: "externaldrive") }
             }
@@ -219,183 +217,86 @@ struct GeneralSettings: View {
     }
 }
 
-/// Disconnect / start fresh (#36). Wipes only Remit's own layer -- favourites, emoji, order,
-/// filters, templates -- and never touches a single reminder, tag or section.
+/// Where Remit's data lives, and a way to start Remit's own settings over.
+///
+/// The old tab explained a "Remit layer" of labels and sections that no longer exists -- those are
+/// Reminders' own now -- so it stopped making sense. This says plainly what Reminders holds, what
+/// Remit saves on this Mac, and whether tags and sections are readable.
 struct DataSettings: View {
     @EnvironmentObject private var metadataStore: MetadataStore
+    @EnvironmentObject private var remindersService: RemindersService
     @State private var confirming = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Remit layer")
-                .font(Theme.font(13, .semibold))
-            Text("""
-                Favourites, project emoji, sidebar order, saved filters and templates are stored by \
-                Remit, because Apple Reminders has nowhere to put them. Tasks, lists, tags and \
-                sections always live in Reminders and are never stored here.
-                """)
-                .font(Theme.font(11))
-                .foregroundStyle(.secondary)
+        Form {
+            Section("In Apple Reminders") {
+                item(
+                    "checklist",
+                    "Tasks, lists, tags, sections and list groups",
+                    "Synced by iCloud to all your devices, as always. Remit reads and changes them in place and keeps no copy."
+                )
+                LabeledContent("Tags and sections") {
+                    switch remindersService.nativeStatus {
+                    case .available:
+                        Label("Readable", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(Theme.today)
+                    case .needsFullDiskAccess:
+                        Button("Needs Full Disk Access…") {
+                            NSWorkspace.shared.open(NativeMetadataStatus.fullDiskAccessSettingsURL)
+                        }
+                    case .unavailable:
+                        Text("Unavailable").foregroundStyle(Theme.overdue)
+                    case .unknown:
+                        Text("Checking…").foregroundStyle(.secondary)
+                    }
+                }
+            }
 
-            Button("Reset Remit Data...", role: .destructive) { confirming = true }
+            Section("Saved by Remit on this Mac") {
+                item(
+                    "line.3.horizontal.decrease.circle",
+                    "Saved filters, favourites, list emoji, sidebar order and templates",
+                    "Reminders has nowhere to keep these, so Remit saves them in its own file, with a backup."
+                )
+                item(
+                    "slider.horizontal.3",
+                    "Display settings, keyboard shortcuts and preferences",
+                    "Saved in Remit's preferences."
+                )
+                Button("Show Settings File in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([metadataStore.fileLocation])
+                }
+            }
 
-            Text("This deletes the Remit layer only. Every task and list stays in Apple Reminders.")
-                .font(Theme.font(10))
-                .foregroundStyle(.secondary)
-
-            Spacer()
+            Section {
+                Button("Reset Remit's Settings…", role: .destructive) { confirming = true }
+            } footer: {
+                Text("Clears saved filters, favourites, list emoji, sidebar order and templates. Your reminders, tags and sections are not affected.")
+                    .font(Theme.font(11))
+                    .foregroundStyle(.secondary)
+            }
         }
-        .padding(16)
-        .confirmationDialog("Reset all Remit data?", isPresented: $confirming, titleVisibility: .visible) {
+        .formStyle(.grouped)
+        .confirmationDialog("Reset Remit's settings?", isPresented: $confirming, titleVisibility: .visible) {
             Button("Reset", role: .destructive) { metadataStore.resetAll() }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Favourites, emoji, project order, filters and templates will be erased. Your Reminders tasks, lists, tags and sections are not affected.")
+            Text("Saved filters, favourites, list emoji, sidebar order and templates will be erased. Your reminders, tags and sections are not affected.")
         }
     }
-}
 
-
-/// Automation / agent access (ROADMAP.md #18, #30, #36, #39).
-///
-/// Those four prompts are the same request made four times: an MCP/automation setting that kept
-/// either not shipping or not being findable. So this tab states plainly what exists, where it is,
-/// and whether it's on your PATH -- rather than a toggle whose effect you can't verify.
-///
-/// The automation surface is a **command-line tool**, not a server inside the app. An embedded
-/// HTTP/MCP server would put a listening socket and a request loop in the UI process, where one
-/// hung request takes the window down with it. `remit-cli` starts, does one thing, and exits, so
-/// nothing it does can destabilise the app. Agents (Claude Code included) drive it by shelling out.
-struct AutomationSettings: View {
-    @State private var copied = false
-
-    /// The CLI ships inside the app bundle, so this resolves for an installed copy and a dev build
-    /// alike.
-    private var toolPath: String? {
-        Bundle.main.executableURL?
-            .deletingLastPathComponent()
-            .appendingPathComponent("remit-cli")
-            .path
-    }
-
-    private var isOnPath: Bool {
-        ["/usr/local/bin/remit", "\(NSHomeDirectory())/.local/bin/remit"]
-            .contains { FileManager.default.fileExists(atPath: $0) }
-    }
-
-    private var installCommand: String {
-        guard let toolPath else { return "" }
-        return "ln -sf \"\(toolPath)\" /usr/local/bin/remit"
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Command-line access")
-                    .font(Theme.font(13, .semibold))
-
-                Text("""
-                    Remit ships a command-line tool so AI agents and scripts can read and write \
-                    your tasks. It talks to Apple Reminders directly and exits immediately — there \
-                    is no server, no open port, and nothing running in the background.
-                    """)
+    private func item(_ symbol: String, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: symbol)
+                .foregroundStyle(Theme.secondaryText)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(Theme.font(13))
+                Text(detail)
                     .font(Theme.font(11))
-                    .foregroundStyle(Theme.secondaryText)
-
-                statusRow(
-                    "Tool installed in app bundle",
-                    ok: toolPath.map { FileManager.default.fileExists(atPath: $0) } ?? false
-                )
-                statusRow("Available on PATH as `remit`", ok: isOnPath)
-
-                if let toolPath {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Path")
-                            .font(Theme.font(11, .semibold))
-                            .foregroundStyle(Theme.secondaryText)
-                        Text(toolPath)
-                            .font(.system(size: 10, design: .monospaced))
-                            .textSelection(.enabled)
-                            .lineLimit(2)
-                    }
-                }
-
-                if !isOnPath {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("To use it as `remit` anywhere, run this in Terminal:")
-                            .font(Theme.font(11))
-                            .foregroundStyle(Theme.secondaryText)
-                        HStack {
-                            Text(installCommand)
-                                .font(.system(size: 10, design: .monospaced))
-                                .textSelection(.enabled)
-                                .lineLimit(2)
-                            Spacer()
-                            Button(copied ? "Copied" : "Copy") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(installCommand, forType: .string)
-                                copied = true
-                            }
-                            .buttonStyle(.link)
-                        }
-                        .padding(8)
-                        .background(RoundedRectangle(cornerRadius: 5).fill(Theme.columnBackground))
-                        Text("Remit does not write outside its own folder, so this step is yours to run.")
-                            .font(Theme.font(10))
-                            .foregroundStyle(Theme.secondaryText)
-                    }
-                }
-
-                Divider()
-
-                Text("Commands")
-                    .font(Theme.font(12, .semibold))
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Self.commands, id: \.0) { command, description in
-                        HStack(alignment: .top, spacing: 8) {
-                            Text(command)
-                                .font(.system(size: 10, design: .monospaced))
-                                .frame(width: 190, alignment: .leading)
-                            Text(description)
-                                .font(Theme.font(10))
-                                .foregroundStyle(Theme.secondaryText)
-                            Spacer()
-                        }
-                    }
-                }
-
-                Text("""
-                    The tool asks for its own Reminders permission the first time it runs, because \
-                    macOS grants access per binary. Labels and sections are read from Remit's own \
-                    data file; the tool never writes that file, so it cannot conflict with the app.
-                    """)
-                    .font(Theme.font(10))
-                    .foregroundStyle(Theme.secondaryText)
-                    .padding(.top, 4)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(16)
         }
     }
-
-    private func statusRow(_ label: String, ok: Bool) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: ok ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(ok ? Theme.today : Theme.secondaryText)
-            Text(label).font(Theme.font(11))
-            Spacer()
-        }
-    }
-
-    private static let commands: [(String, String)] = [
-        ("remit projects", "List every project with open task counts"),
-        ("remit list", "All open tasks as JSON"),
-        ("remit list --project Work", "Open tasks in one project"),
-        ("remit list --due today", "today, tomorrow, or overdue"),
-        ("remit list --all", "Include completed tasks"),
-        ("remit add \"Title\"", "Create a task in the default list"),
-        ("  --project X --due tomorrow", "...with a project and date"),
-        ("  --priority 1 --notes \"...\"", "...with priority and notes"),
-        ("remit complete <id>", "Mark a task done"),
-        ("remit delete <id>", "Delete a task"),
-    ]
 }

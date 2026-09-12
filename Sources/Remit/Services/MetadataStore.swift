@@ -77,6 +77,9 @@ final class MetadataStore: ObservableObject {
     private let fileURL: URL
     private let backupURL: URL
 
+    /// Where the settings file lives, for Settings' "Show in Finder".
+    var fileLocation: URL { fileURL }
+
     /// Surfaced in the UI. Silent failure is the one thing this layer must never do: every
     /// quarantine, restore and failed write reports itself here.
     @Published var storageWarning: String?

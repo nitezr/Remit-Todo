@@ -14,9 +14,6 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp Sources/Remit/Supporting/Info.plist "$APP/Contents/Info.plist"
 cp .build/debug/Remit "$APP/Contents/MacOS/Remit"
-# Ship the CLI inside the bundle so Settings -> Automation has a stable path to point at, and so
-# installing the app installs the automation tool with it.
-cp .build/debug/remit-cli "$APP/Contents/MacOS/remit-cli"
 # Prefer the stable local identity if ./setup-signing.sh has been run: an ad-hoc signature
 # changes with every code change, and macOS revokes the Reminders grant when it does.
 SIGN_ID="-"

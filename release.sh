@@ -35,9 +35,6 @@ rm -rf "$STAGING"
 mkdir -p "$APP/Contents/MacOS" "$DIST"
 cp Sources/Remit/Supporting/Info.plist "$APP/Contents/Info.plist"
 cp .build/release/Remit "$APP/Contents/MacOS/Remit"
-# Shipped inside the bundle so Settings -> Automation has a stable path, and so installing the
-# app installs the automation tool with it.
-cp .build/release/remit-cli "$APP/Contents/MacOS/remit-cli"
 
 # Stamp the real version rather than shipping the placeholder from the source plist. CFBundleVersion
 # must increase monotonically for Sparkle and for macOS's own "newer version installed" checks, so

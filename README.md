@@ -1,3 +1,5 @@
+<img src="docs/images/icon.png" alt="" width="96" align="left">
+
 # Remit
 
 **A keyboard-first Mac workspace for Apple Reminders.**
@@ -126,7 +128,7 @@ Compared against Reminders on macOS 26.
 | Back and forward through where you've been | — | ✓ Keys or trackpad swipe |
 | **Everywhere else** | | |
 | iPhone, iPad, Apple Watch, Siri, widgets | ✓ | — Mac only |
-| Automation | ✓ Shortcuts, AppleScript | ✓ A JSON command-line tool |
+| Automation | ✓ Shortcuts, AppleScript | ✓ Anything that automates Reminders works on the same data |
 | Cost | Included with macOS | Free and open source (MIT) |
 
 ## Install

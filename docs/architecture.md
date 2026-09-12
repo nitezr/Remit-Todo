@@ -23,7 +23,6 @@ Sources/Remit/                SwiftUI app
   Views/                      sidebar, list/board/calendar layouts, quick add, details, tour
 Sources/RemindersNative/      read-only SQLite reader for Reminders' tags, sections and groups
 Sources/ReminderKitBridge/    writes for the same, through Apple's private ReminderKit framework
-Sources/remit-cli/            JSON command-line tool over the same data
 ```
 
 ## Reminders' tags, sections and groups
