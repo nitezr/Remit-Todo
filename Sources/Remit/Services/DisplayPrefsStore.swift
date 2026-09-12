@@ -24,14 +24,23 @@ final class DisplayPrefsStore: ObservableObject {
     @Published private var byView: [String: DisplayPreferences]
 
     private let defaultsKey = "display.preferences.byView"
+    /// False for `--demo`, whose settings must never reach the user's real ones.
+    private let persists: Bool
 
     init() {
+        persists = true
         if let raw = UserDefaults.standard.data(forKey: defaultsKey),
            let decoded = try? JSONDecoder().decode([String: DisplayPreferences].self, from: raw) {
             byView = decoded
         } else {
             byView = [:]
         }
+    }
+
+    /// Settings held in memory only, for demo launches.
+    init(volatile preferences: [String: DisplayPreferences]) {
+        persists = false
+        byView = preferences
     }
 
     func preferences(for viewKey: String) -> DisplayPreferences {
@@ -50,7 +59,7 @@ final class DisplayPrefsStore: ObservableObject {
     }
 
     private func persist() {
-        guard let encoded = try? JSONEncoder().encode(byView) else { return }
+        guard persists, let encoded = try? JSONEncoder().encode(byView) else { return }
         UserDefaults.standard.set(encoded, forKey: defaultsKey)
     }
 }

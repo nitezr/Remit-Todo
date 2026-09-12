@@ -21,8 +21,8 @@ struct ContentView: View {
     @EnvironmentObject private var metadataStore: MetadataStore
     @EnvironmentObject private var uiState: UIState
     @EnvironmentObject private var shortcuts: ShortcutsStore
-    @State private var selection: SidebarSelection? = .today
-    @StateObject private var history = NavigationHistory(start: .today)
+    @State private var selection: SidebarSelection? = DemoMode.initialSelection
+    @StateObject private var history = NavigationHistory(start: DemoMode.initialSelection)
     @StateObject private var swipeMonitor = SwipeMonitor()
     /// Read only so the whole hierarchy re-renders when the font setting changes. Theme.font reads
     /// the value at render time, so without an observer here the switch would need a relaunch.
@@ -34,6 +34,8 @@ struct ContentView: View {
     /// Per launch on purpose: the permission is still missing next time, so it should say so again.
     @State private var fullDiskAccessDismissed = false
     @AppStorage("onboarding.completed") private var onboardingCompleted = false
+    /// Flipped by demo snapshots only; see `DemoMode.redrawNotification`.
+    @State private var demoRedraw = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,6 +53,10 @@ struct ContentView: View {
             }
             splitView
         }
+        .opacity(demoRedraw ? 0.999 : 1)
+        .onReceive(NotificationCenter.default.publisher(for: DemoMode.redrawNotification)) { _ in
+            demoRedraw.toggle()
+        }
         // Every selection change routes through the history so a click, a palette result and a
         // swipe all stay in step. `history.current` is the source of truth; `selection` follows it.
         .onChange(of: selection) { _, new in
@@ -58,7 +64,12 @@ struct ContentView: View {
             history.visit(new)
         }
         .onAppear {
-            if !onboardingCompleted { uiState.onboardingOpen = true }
+            if DemoMode.isActive {
+                uiState.onboardingOpen = DemoMode.showsTour
+                DemoMode.windowAppeared()
+            } else if !onboardingCompleted {
+                uiState.onboardingOpen = true
+            }
             swipeMonitor.install { direction in
                 let destination = direction == .back ? history.goBack() : history.goForward()
                 guard let destination else { return false }  // let the event through at either end
@@ -88,22 +99,42 @@ struct ContentView: View {
         .sheet(isPresented: $uiState.onboardingOpen) { OnboardingView() }
     }
 
+    @ViewBuilder
     private var splitView: some View {
-        NavigationSplitView(columnVisibility: columnVisibility) {
-            SidebarView(selection: $selection)
-        } detail: {
-            if !remindersService.authorizationGranted {
-                RemindersAccessPromptView()
-            } else if selection == .filtersAndLabels {
-                LabelsPage(selection: $selection)
-            } else if let selection {
-                TaskListView(selection: selection) { destination in
-                    self.selection = destination
-                }
-                .id(selection)
-            } else {
-                ContentUnavailableView("Select a view", systemImage: "checklist")
+        if DemoMode.flattensSidebar {
+            // Demo screenshots only. On macOS 26 the split view's sidebar is a floating glass panel,
+            // and an app drawing its own window can't capture glass or anything inside it -- the
+            // sidebar came out blank. A plain column with the sidebar's own colour draws in full.
+            HStack(spacing: 0) {
+                SidebarView(selection: $selection)
+                    .scrollContentBackground(.hidden)
+                    .frame(width: 250)
+                    .background(Theme.sidebarBackground)
+                Divider().overlay(Theme.separator)
+                NavigationStack { detail }
             }
+        } else {
+            NavigationSplitView(columnVisibility: columnVisibility) {
+                SidebarView(selection: $selection)
+            } detail: {
+                detail
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        if !remindersService.authorizationGranted {
+            RemindersAccessPromptView()
+        } else if selection == .filtersAndLabels {
+            LabelsPage(selection: $selection)
+        } else if let selection {
+            TaskListView(selection: selection) { destination in
+                self.selection = destination
+            }
+            .id(selection)
+        } else {
+            ContentUnavailableView("Select a view", systemImage: "checklist")
         }
     }
 

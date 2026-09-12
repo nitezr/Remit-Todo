@@ -54,7 +54,11 @@ final class RemindersService: ObservableObject {
     @Published private(set) var projects: [RemitProject] = []
     @Published private(set) var tasks: [RemitTask] = []
     @Published private(set) var authorizationGranted = false
-    @Published var lastError: String?
+    @Published var lastError: String? {
+        // Demo data isn't in Reminders, so every save to it fails. Those failures say nothing
+        // useful to someone trying the app, and would land in screenshots.
+        didSet { if isDemo, lastError != nil { lastError = nil } }
+    }
     /// Every tag in use in Reminders.
     @Published private(set) var tags: [ReminderTag] = []
     /// Project id -> its Reminders sections, in order.
@@ -92,6 +96,9 @@ final class RemindersService: ObservableObject {
     private var changeObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
     private var storeWatcher: StoreWatcher?
+    /// Set only by `init(demo:)`.
+    private var isDemo = false
+    private var demoDefaultProjectID: String?
 
     init() {
         authorizationGranted = EKEventStore.authorizationStatus(for: .reminder) == .fullAccess
@@ -126,8 +133,24 @@ final class RemindersService: ObservableObject {
         }
     }
 
+    /// Remit on made-up data (`--demo`, see DemoMode). Nothing is read from or written to
+    /// EventKit or Reminders' store: `refreshAll` does nothing, and tag and section changes stay on
+    /// screen without being saved anywhere.
+    init(demo data: DemoData) {
+        isDemo = true
+        demoDefaultProjectID = DemoData.inboxID
+        authorizationGranted = true
+        nativeStatus = .available
+        projects = data.projects
+        tasks = data.tasks
+        tags = data.tags
+        sectionsByProject = data.sections
+        groups = data.groups
+    }
+
     var defaultProjectID: String? {
-        store.defaultCalendarForNewReminders()?.calendarIdentifier
+        if isDemo { return demoDefaultProjectID }
+        return store.defaultCalendarForNewReminders()?.calendarIdentifier
     }
 
     func requestAccess() async {
@@ -145,7 +168,7 @@ final class RemindersService: ObservableObject {
     }
 
     func refreshAll() async {
-        guard authorizationGranted else { return }
+        guard authorizationGranted, !isDemo else { return }
         let calendars = store.calendars(for: .reminder)
         var fetchedProjects = calendars.map { RemitProject(from: $0) }
         var fetchedTasks = await fetchReminders(in: calendars).map { RemitTask(from: $0) }
@@ -447,6 +470,7 @@ final class RemindersService: ObservableObject {
     /// daemon -- then re-reads. The re-read settles the optimistic value views already show: it
     /// sticks if the write landed, and reverts to what Reminders really holds if it didn't.
     private func nativeWrite(_ work: @escaping @Sendable () throws -> Void) {
+        guard !isDemo else { return }
         Task {
             do {
                 try await Task.detached(priority: .userInitiated) { try work() }.value

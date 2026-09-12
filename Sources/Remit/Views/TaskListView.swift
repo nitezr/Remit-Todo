@@ -106,8 +106,25 @@ struct TaskListView: View {
         .onAppear {
             RemitLog.debug("install monitor for \(selection.displayKey)")
             keyMonitor.install(handleEvent)
+            openDemoState()
         }
         .onDisappear { keyMonitor.remove() }
+    }
+
+    /// `--demo-peek` and `--demo-quick-add`: the states the README screenshots show, opened without
+    /// anyone clicking. Does nothing outside demo mode.
+    private func openDemoState() {
+        if let title = DemoMode.peekTitle, peekTask == nil {
+            peekTask = remindersService.tasks.first { $0.title == title }
+        }
+        if let text = DemoMode.quickAddText {
+            activeAddSection = sections.first { !$0.isOverdue }?.id
+            quickAddText = text
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(700))
+                focus = .quickAdd
+            }
+        }
     }
 
     /// Only a project view has sections, and only when the Display menu isn't overriding the
@@ -724,7 +741,9 @@ struct TaskListView: View {
     /// shortcuts can be plain letters without eating task titles.
     private func handleEvent(_ event: NSEvent) -> Bool {
         RemitLog.debug("key code=\(event.keyCode) chars=\(event.charactersIgnoringModifiers ?? "") editing=\(KeyMonitor.isEditingText) responder=\(String(describing: NSApp.keyWindow?.firstResponder))")
-        guard !KeyMonitor.isEditingText, !KeyMonitor.isRecording, !KeyMonitor.isSheetOpen else { return false }
+        // A snapshot launch takes keyboard focus while it draws; a key pressed then must not act.
+        guard !KeyMonitor.isEditingText, !KeyMonitor.isRecording, !KeyMonitor.isSheetOpen,
+              !DemoMode.isSnapshot else { return false }
 
         // macOS sets .function and .numericPad on arrow keys. Leaving them in the comparison
         // below made every arrow fail the "no modifiers" guard and fall through unhandled -- in

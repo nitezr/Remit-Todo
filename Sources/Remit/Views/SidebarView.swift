@@ -23,6 +23,55 @@ struct SidebarView: View {
     @AppStorage("sidebar.collapsedProjects") private var collapsedRaw = ""
 
     var body: some View {
+        Group {
+            if DemoMode.flattensSidebar {
+                snapshotSidebar
+            } else {
+                sidebarList
+            }
+        }
+        .confirmationDialog(
+            deleteTarget.map { "Delete \"\($0.title)\"?" } ?? "Delete project?",
+            isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Project and Tasks", role: .destructive) {
+                if let deleteTarget { deleteProject(deleteTarget) }
+                deleteTarget = nil
+            }
+            Button("Cancel", role: .cancel) { deleteTarget = nil }
+        } message: {
+            if let deleteTarget {
+                let count = openCount(forProject: deleteTarget.id)
+                Text(
+                    count == 0
+                    ? "This deletes the list from Apple Reminders on all your devices. This cannot be undone."
+                    : "This deletes the list and its \(count) task\(count == 1 ? "" : "s") from Apple Reminders on all your devices. This cannot be undone."
+                )
+            }
+        }
+        .sheet(item: $templateSource) { project in
+            SaveTemplateSheet(project: project) { templateSource = nil }
+        }
+        .sheet(item: $emojiTarget) { project in
+            EmojiPickerSheet(
+                projectTitle: project.title,
+                current: metadataStore.projectMetadata(project.id).emoji
+            ) { emoji in
+                metadataStore.setEmoji(emoji, forProject: project.id)
+                emojiTarget = nil
+            } onCancel: {
+                emojiTarget = nil
+            }
+        }
+        // Pinned beneath the list rather than placed inside it. A footer that scrolls away is a
+        // footer nobody finds, and #35 was a real bug where a sticky panel ate the project list's
+        // scroll space -- safeAreaInset reserves its own room instead of overlapping.
+        .safeAreaInset(edge: .bottom, spacing: 0) { footer }
+        .navigationSplitViewColumnWidth(min: 200, ideal: 240)
+    }
+
+    private var sidebarList: some View {
         List(selection: $selection) {
             Section {
                 fixedRow(.inbox, title: "Inbox", systemImage: "tray", count: inboxCount)
@@ -83,45 +132,92 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .confirmationDialog(
-            deleteTarget.map { "Delete \"\($0.title)\"?" } ?? "Delete project?",
-            isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button("Delete Project and Tasks", role: .destructive) {
-                if let deleteTarget { deleteProject(deleteTarget) }
-                deleteTarget = nil
+    }
+
+    /// Demo screenshots only: the same rows, stacked without a List. A List's rows never draw into
+    /// a window's cached image -- all of them were present, visible and full size, and the sidebar
+    /// still came out blank -- and a cached image is the only screenshot an app can take of itself
+    /// without screen-recording permission.
+    private var snapshotSidebar: some View {
+        // No ScrollView either: its content sits in a nested view that also stayed blank. The rows
+        // fit a screenshot-sized window, so a plain stack is enough.
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 1) {
+                snapshotRow(.inbox) { fixedRow(.inbox, title: "Inbox", systemImage: "tray", count: inboxCount) }
+                snapshotRow(.today) { fixedRow(.today, title: "Today", systemImage: "calendar", count: todayCount) }
+                snapshotRow(.upcoming) {
+                    fixedRow(.upcoming, title: "Upcoming", systemImage: "calendar.badge.clock", count: upcomingCount)
+                }
+                snapshotRow(.filtersAndLabels) {
+                    fixedRow(.filtersAndLabels, title: "Filters & Tags", systemImage: "number", count: nil)
+                }
+
+                if !metadataStore.filters.isEmpty {
+                    snapshotHeader("Filters")
+                    ForEach(metadataStore.filters) { filter in
+                        snapshotRow(.filter(filter.id)) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "line.3.horizontal.decrease.circle")
+                                    .foregroundStyle(Theme.secondaryText)
+                                Text(filter.name).font(Theme.sidebarRow)
+                                Spacer()
+                            }
+                        }
+                    }
+                }
+
+                if !favorites.isEmpty {
+                    snapshotHeader("Favorites")
+                    ForEach(favorites) { project in
+                        snapshotRow(.project(project.id)) { projectRow(project, depth: 0) }
+                    }
+                }
+
+                snapshotHeader("My Projects")
+                ForEach(projectRows) { row in
+                    switch row.kind {
+                    case .group(let group):
+                        groupRow(group)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                    case .project(let project, let depth):
+                        snapshotRow(.project(project.id)) { projectRow(project, depth: depth) }
+                    }
+                }
             }
-            Button("Cancel", role: .cancel) { deleteTarget = nil }
-        } message: {
-            if let deleteTarget {
-                let count = openCount(forProject: deleteTarget.id)
-                Text(
-                    count == 0
-                    ? "This deletes the list from Apple Reminders on all your devices. This cannot be undone."
-                    : "This deletes the list and its \(count) task\(count == 1 ? "" : "s") from Apple Reminders on all your devices. This cannot be undone."
-                )
-            }
+            .padding(.horizontal, 8)
+            .padding(.top, 10)
+            Spacer(minLength: 0)
         }
-        .sheet(item: $templateSource) { project in
-            SaveTemplateSheet(project: project) { templateSource = nil }
-        }
-        .sheet(item: $emojiTarget) { project in
-            EmojiPickerSheet(
-                projectTitle: project.title,
-                current: metadataStore.projectMetadata(project.id).emoji
-            ) { emoji in
-                metadataStore.setEmoji(emoji, forProject: project.id)
-                emojiTarget = nil
-            } onCancel: {
-                emojiTarget = nil
-            }
-        }
-        // Pinned beneath the list rather than placed inside it. A footer that scrolls away is a
-        // footer nobody finds, and #35 was a real bug where a sticky panel ate the project list's
-        // scroll space -- safeAreaInset reserves its own room instead of overlapping.
-        .safeAreaInset(edge: .bottom, spacing: 0) { footer }
-        .navigationSplitViewColumnWidth(min: 200, ideal: 240)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .clipped()
+    }
+
+    private func snapshotHeader(_ title: String) -> some View {
+        Text(title)
+            .font(Theme.sidebarHeader)
+            .foregroundStyle(Theme.secondaryText)
+            .padding(.horizontal, 10)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
+    }
+
+    private func snapshotRow<Content: View>(
+        _ target: SidebarSelection,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            // A List gives each row its height; in a stack, the rows' fixed-width spacers would
+            // otherwise stretch to share the window's spare height.
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(selection == target ? Theme.accent.opacity(0.14) : Color.clear)
+            )
     }
 
     // MARK: - Footer

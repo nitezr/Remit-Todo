@@ -2,12 +2,26 @@ import SwiftUI
 
 @main
 struct RemitApp: App {
-    @StateObject private var remindersService = RemindersService()
-    @StateObject private var metadataStore = MetadataStore()
-    @StateObject private var displayPrefs = DisplayPrefsStore()
+    @StateObject private var remindersService: RemindersService
+    @StateObject private var metadataStore: MetadataStore
+    @StateObject private var displayPrefs: DisplayPrefsStore
     @StateObject private var uiState = UIState()
     @StateObject private var shortcuts = ShortcutsStore()
     @AppStorage("sidebar.visible") private var sidebarVisible = true
+
+    init() {
+        // `--demo` swaps in made-up data and keeps it away from real Reminders and real settings.
+        DemoMode.launched()
+        if let demo = DemoMode.data {
+            _remindersService = StateObject(wrappedValue: RemindersService(demo: demo))
+            _metadataStore = StateObject(wrappedValue: DemoMode.makeMetadataStore(for: demo))
+            _displayPrefs = StateObject(wrappedValue: DisplayPrefsStore(volatile: DemoMode.displayPreferences))
+        } else {
+            _remindersService = StateObject(wrappedValue: RemindersService())
+            _metadataStore = StateObject(wrappedValue: MetadataStore())
+            _displayPrefs = StateObject(wrappedValue: DisplayPrefsStore())
+        }
+    }
 
     var body: some Scene {
         WindowGroup {
