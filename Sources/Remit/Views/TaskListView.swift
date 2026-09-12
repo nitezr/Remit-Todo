@@ -190,6 +190,26 @@ struct TaskListView: View {
         }
     }
 
+    /// A drag in the List layout ends here. Each task joins the group it was dropped on, unless it
+    /// is already in it -- re-dating a task onto its own day would throw away its time of day.
+    private func dropTasks(_ ids: [String], into section: TaskGrouping.Section) {
+        for id in ids {
+            guard let task = remindersService.tasks.first(where: { $0.id == id }) else { continue }
+            if section.isSectionBucket, task.sectionID == section.sectionID { continue }
+            if let date = section.date, let due = task.dueDate,
+               Calendar.current.isDate(due, inSameDayAs: date) { continue }
+            move(task, to: section)
+        }
+    }
+
+    /// Reordering by drag exists only under Manual sort; nil turns it off everywhere else.
+    private func moveHandler(for section: TaskGrouping.Section) -> ((IndexSet, Int) -> Void)? {
+        guard sorting == .manual else { return nil }
+        return { source, destination in
+            moveTasks(in: section, from: source, to: destination)
+        }
+    }
+
     private var listLayout: some View {
         // No `selection:` binding on purpose. macOS draws its own full-bleed grey highlight for a
         // selected row and offers no way to restyle it, so it showed through around the row's own
@@ -224,11 +244,15 @@ struct TaskListView: View {
                                 // the gesture and the peek never opens.
                                 .onTapGesture(count: 2) { peekTask = task }
                                 .onTapGesture { selectedTaskID = task.id }
+                                .modifier(TaskDrag(id: task.id, enabled: sorting != .manual))
                         }
-                        // Reordering only makes sense against a manual order; under any computed
-                        // sort the row would snap straight back, which reads as a broken drag.
-                        .onMove { source, destination in
-                            moveTasks(in: section, from: source, to: destination)
+                        // Two different drags. Under Manual sort a drag reorders within the group;
+                        // under any computed sort a reorder would snap straight back, so a drag
+                        // moves the task to another group instead -- a section in a project, a day
+                        // in Upcoming -- the same as dropping a card on a board column.
+                        .onMove(perform: moveHandler(for: section))
+                        .dropDestination(for: String.self) { ids, _ in
+                            dropTasks(ids, into: section)
                         }
 
                         // Overdue never takes new tasks -- adding "to Overdue" has no meaning.
@@ -244,6 +268,11 @@ struct TaskListView: View {
                             // card margin plus the card's own 12pt of padding.
                             .listRowInsets(EdgeInsets(top: 14, leading: 18, bottom: 4, trailing: 12))
                             .contextMenu { sectionMenu(section) }
+                            // An empty group has no rows to drop between, so its header takes drops.
+                            .dropDestination(for: String.self) { ids, _ in
+                                dropTasks(ids, into: section)
+                                return !ids.isEmpty
+                            }
                     }
                 }
 
@@ -959,6 +988,21 @@ struct TaskListView: View {
             Task { await remindersService.refreshAll() }
         } catch {
             remindersService.lastError = error.localizedDescription
+        }
+    }
+}
+
+/// Makes a row draggable only when a drag should move it between groups. Under Manual sort the
+/// List's own reordering drag is used instead, and a second drag source on the row would fight it.
+private struct TaskDrag: ViewModifier {
+    let id: String
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.draggable(id)
+        } else {
+            content
         }
     }
 }
