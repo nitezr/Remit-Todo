@@ -13,7 +13,7 @@ on:
 
 jobs:
   release:
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: write
 
@@ -23,6 +23,17 @@ jobs:
           # release.sh derives the marketing version from `git describe` and the build number
           # from `git rev-list --count HEAD`; a shallow clone breaks both.
           fetch-depth: 0
+
+      # GitHub's default Xcode can trail well behind the one Remit is developed with, and an older
+      # Swift compiler crashed outright on this code ("error: fatalError"). Use the newest stable
+      # Xcode on the image instead. The macOS 14 minimum is still enforced: Package.swift's
+      # platforms setting makes the compiler reject any newer API that lacks an availability check.
+      - name: Select newest Xcode
+        run: |
+          XCODE="$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)"
+          sudo xcode-select -s "$XCODE"
+          echo "Using $XCODE"
+          swift --version
 
       # A tag that fails its own tests should not become a release.
       - name: Test

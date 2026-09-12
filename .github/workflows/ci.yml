@@ -12,15 +12,22 @@ concurrency:
 
 jobs:
   build-and-test:
-    # macOS 14 is the deployment target in Package.swift; building on it means CI fails on an
-    # API that is too new rather than the user discovering it at launch.
-    runs-on: macos-14
+    # macOS 15 with its newest Xcode -- see "Select newest Xcode" for why not macOS 14.
+    runs-on: macos-15
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Toolchain
-        run: swift --version
+      # GitHub's default Xcode can trail well behind the one Remit is developed with, and an older
+      # Swift compiler crashed outright on this code ("error: fatalError"). Use the newest stable
+      # Xcode on the image instead. The macOS 14 minimum is still enforced: Package.swift's
+      # platforms setting makes the compiler reject any newer API that lacks an availability check.
+      - name: Select newest Xcode
+        run: |
+          XCODE="$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)"
+          sudo xcode-select -s "$XCODE"
+          echo "Using $XCODE"
+          swift --version
 
       - name: Build
         run: swift build
