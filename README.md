@@ -99,7 +99,7 @@ distilled from the previous build's complete prompt history.
 
 ## Install
 
-Download the DMG from [Releases](https://github.com/niteshrathore/Remit-Todo/releases), open
+Download the DMG from [Releases](https://github.com/nitezr/Remit-Todo/releases), open
 it, and drag Remit to Applications. Or build one yourself:
 
 ```
