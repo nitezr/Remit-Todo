@@ -84,6 +84,9 @@ struct TaskRowView: View {
                 }
             }
         }
+        // Full width whatever the row holds. Without it a row with no date or tag line shrank to
+        // its title, so its selection highlight stopped partway across.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 9)
         .padding(.horizontal, 12)
         // A tinted fill carries the selection; the earlier accent-coloured border read as an error

@@ -747,23 +747,29 @@ final class RemindersService: ObservableObject {
 enum ScheduleTarget {
     case today
     case tomorrow
-    /// The coming Saturday. Today counts when it's already the weekend, matching Todoist.
+    /// The next Saturday. On a Saturday that is a week away, not today: W landing on Today read as
+    /// the key doing the wrong thing. On a Sunday it is the Saturday six days ahead.
     case weekend
     case nextWeek
     case none
 
     var date: Date? {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
+        resolvedDate(from: Date())
+    }
+
+    /// `now` and `calendar` are injectable so the weekday arithmetic is testable on fixed dates.
+    func resolvedDate(from now: Date, calendar: Calendar = .current) -> Date? {
+        let today = calendar.startOfDay(for: now)
         switch self {
         case .today:
             return today
         case .tomorrow:
             return calendar.date(byAdding: .day, value: 1, to: today)
         case .weekend:
+            // Gregorian weekdays run Sunday = 1 through Saturday = 7.
             let weekday = calendar.component(.weekday, from: today)
-            let daysUntilSaturday = (7 - weekday + 7) % 7
-            return calendar.date(byAdding: .day, value: daysUntilSaturday, to: today)
+            let daysUntilSaturday = (7 - weekday) % 7
+            return calendar.date(byAdding: .day, value: daysUntilSaturday == 0 ? 7 : daysUntilSaturday, to: today)
         case .nextWeek:
             return calendar.date(byAdding: .day, value: 7, to: today)
         case .none:
