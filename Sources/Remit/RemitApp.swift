@@ -42,6 +42,7 @@ struct RemitApp: App {
                 .disabled(remindersService.undoDescription == nil)
             }
             CommandGroup(replacing: .help) {
+                Button("Welcome Tour…") { uiState.onboardingOpen = true }
                 Button("Keyboard Shortcuts") { uiState.shortcutsHelpOpen = true }
                     .keyboardShortcut("/", modifiers: [.command, .shift])
             }

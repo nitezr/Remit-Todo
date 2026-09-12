@@ -33,6 +33,7 @@ struct ContentView: View {
     @AppStorage("sidebar.visible") private var sidebarVisible = true
     /// Per launch on purpose: the permission is still missing next time, so it should say so again.
     @State private var fullDiskAccessDismissed = false
+    @AppStorage("onboarding.completed") private var onboardingCompleted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -57,6 +58,7 @@ struct ContentView: View {
             history.visit(new)
         }
         .onAppear {
+            if !onboardingCompleted { uiState.onboardingOpen = true }
             swipeMonitor.install { direction in
                 let destination = direction == .back ? history.goBack() : history.goForward()
                 guard let destination else { return false }  // let the event through at either end
@@ -73,9 +75,17 @@ struct ContentView: View {
         .onChange(of: uiState.navigateForward) { _, _ in
             if let destination = history.goForward() { selection = destination }
         }
+        // Destinations requested from outside the sidebar, such as the welcome tour opening its
+        // practice list. Cleared once applied, so the same request can be made again later.
+        .onChange(of: uiState.pendingNavigation) { _, destination in
+            guard let destination else { return }
+            selection = destination
+            uiState.pendingNavigation = nil
+        }
         .sheet(isPresented: $uiState.paletteOpen) { paletteSheet }
         .sheet(isPresented: $uiState.settingsOpen) { SettingsWindow() }
         .sheet(isPresented: $uiState.shortcutsHelpOpen) { shortcutsSheet }
+        .sheet(isPresented: $uiState.onboardingOpen) { OnboardingView() }
     }
 
     private var splitView: some View {

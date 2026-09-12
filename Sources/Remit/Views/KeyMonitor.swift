@@ -37,6 +37,14 @@ final class KeyMonitor: ObservableObject {
 
     /// True while a text field owns the keyboard -- SwiftUI TextFields edit through an NSTextView
     /// field editor, so that's what shows up as first responder.
+    /// True while a sheet -- the welcome tour, a task's details, Settings -- is in front. Its keys
+    /// belong to it: Return should press its default button, not open a task behind it, and `e`
+    /// must never complete a task nobody can see.
+    static var isSheetOpen: Bool {
+        guard let window = NSApp.keyWindow else { return false }
+        return window.isSheet || window.attachedSheet != nil
+    }
+
     static var isEditingText: Bool {
         NSApp.keyWindow?.firstResponder is NSTextView
     }

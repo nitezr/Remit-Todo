@@ -8,12 +8,14 @@ enum RemindersServiceError: LocalizedError {
     case projectNotFound
     case taskNotFound
     case accessDenied
+    case noReminderAccount
 
     var errorDescription: String? {
         switch self {
         case .projectNotFound: return "That project could not be found in Reminders."
         case .taskNotFound: return "That task could not be found in Reminders."
         case .accessDenied: return "Remit needs permission to access Reminders. Grant it in System Settings > Privacy & Security > Reminders."
+        case .noReminderAccount: return "There is no Reminders account on this Mac to add a list to."
         }
     }
 }
@@ -238,6 +240,78 @@ final class RemindersService: ObservableObject {
                 continuation.resume(returning: reminders ?? [])
             }
         }
+    }
+
+    // MARK: - Welcome tour
+
+    /// The tour's practice list, if it is already in Reminders.
+    var tourProject: RemitProject? {
+        projects.first { $0.title == TourContent.listName }
+    }
+
+    /// Adds the welcome tour's practice list: a Reminders list with the tour's tasks, and -- when
+    /// Reminders' store is readable -- their sections and tags. Adding it twice returns the list
+    /// already there rather than a duplicate.
+    ///
+    /// Tasks go in through EventKit first, so a Mac without Full Disk Access still gets a usable
+    /// list. Sections and tags follow in one ReminderKit pass, in order: each section create sends
+    /// the list's whole section order, so they cannot run side by side.
+    @discardableResult
+    func createTourList() async throws -> String {
+        if let existing = tourProject { return existing.id }
+
+        let source = store.defaultCalendarForNewReminders()?.source
+            ?? store.sources.first { !$0.calendars(for: .reminder).isEmpty }
+        guard let source else { throw RemindersServiceError.noReminderAccount }
+
+        let calendar = EKCalendar(for: .reminder, eventStore: store)
+        calendar.title = TourContent.listName
+        calendar.source = source
+        try store.saveCalendar(calendar, commit: true)
+        let listID = calendar.calendarIdentifier
+
+        var placed: [(section: String, taskID: String, tags: [String])] = []
+        for item in TourContent.tasks {
+            let task = try createTask(
+                title: item.title,
+                projectID: listID,
+                dueDate: item.dueToday ? ScheduleTarget.today.date : nil,
+                priority: item.priority,
+                notes: item.notes
+            )
+            placed.append((item.section, task.id, item.tags))
+        }
+        await refreshAll()
+
+        guard nativeStatus == .available else { return listID }
+        let sectionNames = TourContent.sections
+        let plan = placed
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                var ordering: [String] = []
+                var sectionIDs: [String: String] = [:]
+                for name in sectionNames {
+                    let id = try RKBridge.createSectionNamed(name, inList: listID, existingSectionIDs: ordering)
+                    ordering.append(id)
+                    sectionIDs[name] = id
+                }
+                for item in plan {
+                    if let sectionID = sectionIDs[item.section] {
+                        try RKBridge.moveReminder(item.taskID, toSection: sectionID, leavingSection: nil)
+                    }
+                    if !item.tags.isEmpty {
+                        try RKBridge.setTags(item.tags, forReminder: item.taskID)
+                    }
+                }
+            }.value
+        } catch {
+            // The list and its tasks already exist; a failed section or tag step shouldn't read as
+            // the whole tour failing, so it surfaces as a banner instead.
+            RemitLog.debug("tour sections/tags failed: \(error.localizedDescription)")
+            lastError = "The tour list was added, but its sections or tags weren't: \(error.localizedDescription)"
+        }
+        await refreshAll()
+        return listID
     }
 
     // MARK: - Tags, sections and groups

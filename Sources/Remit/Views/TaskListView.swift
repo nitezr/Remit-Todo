@@ -724,7 +724,7 @@ struct TaskListView: View {
     /// shortcuts can be plain letters without eating task titles.
     private func handleEvent(_ event: NSEvent) -> Bool {
         RemitLog.debug("key code=\(event.keyCode) chars=\(event.charactersIgnoringModifiers ?? "") editing=\(KeyMonitor.isEditingText) responder=\(String(describing: NSApp.keyWindow?.firstResponder))")
-        guard !KeyMonitor.isEditingText, !KeyMonitor.isRecording else { return false }
+        guard !KeyMonitor.isEditingText, !KeyMonitor.isRecording, !KeyMonitor.isSheetOpen else { return false }
 
         // macOS sets .function and .numericPad on arrow keys. Leaving them in the comparison
         // below made every arrow fail the "no modifiers" guard and fall through unhandled -- in

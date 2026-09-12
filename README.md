@@ -25,6 +25,8 @@ What works:
 - Sidebar with Reminders groups, favourites, emoji and live counts
 - Command palette (⌘K), settings window, keyboard shortcuts, task detail peek
 - `remit-cli`, a separate binary for automation
+- A welcome tour on first launch (Help → Welcome Tour) that explains both permissions and can add
+  a practice list to Reminders
 
 Not there yet: drag-and-drop is partial, the MCP server, and the visual pass to fully match
 Todoist. All scoped in `ROADMAP.md`, grouped by priority and cross-referenced to the original

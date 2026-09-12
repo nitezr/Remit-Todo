@@ -10,6 +10,8 @@ final class UIState: ObservableObject {
     @Published var paletteOpen = false
     @Published var settingsOpen = false
     @Published var shortcutsHelpOpen = false
+    /// The welcome tour. Opened automatically on first launch, and from Help → Welcome Tour.
+    @Published var onboardingOpen = false
     /// Toggled by the Back/Forward menu items. A signal rather than a value: the history itself
     /// lives in ContentView, and the menu has no access to it.
     @Published var navigateBack = false
