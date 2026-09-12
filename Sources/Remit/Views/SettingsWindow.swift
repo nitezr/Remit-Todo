@@ -250,7 +250,7 @@ struct DataSettings: View {
             Button("Reset", role: .destructive) { metadataStore.resetAll() }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Labels, sections, favourites, nesting, and emoji will be erased. Your Reminders tasks and lists are not affected.")
+            Text("Favourites, emoji, project order, filters and templates will be erased. Your Reminders tasks, lists, tags and sections are not affected.")
         }
     }
 }

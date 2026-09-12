@@ -71,25 +71,21 @@ enum TaskGrouping {
 
     // MARK: - Project
 
-    /// A project splits into its named sections plus one unsectioned bucket. Sections are a
-    /// Remit-only layer -- Reminders has no section primitive -- so the grouping is driven by
-    /// MetadataStore rather than anything on the reminder itself (ROADMAP.md "Sections").
+    /// A project splits into its Reminders sections plus one unsectioned bucket, driven by each
+    /// task's own `sectionID` as Reminders records it.
     ///
     /// The unsectioned bucket renders first and without a header when there are no named sections,
-    /// so a project that has never used sections looks like a plain list.
-    /// `assignments` maps a task id to the section it belongs to; a task absent from it is
-    /// unsectioned. A section id that no longer exists also reads as unsectioned, so deleting a
-    /// section can never hide its tasks.
+    /// so a project that has never used sections looks like a plain list. A section id that no
+    /// longer exists reads as unsectioned, so a deleted section can never hide its tasks.
     static func project(
         _ tasks: [RemitTask],
         sections projectSections: [TaskSection],
-        assignments: [String: String],
         untitled: String
     ) -> [Section] {
         let sorted = sorted(tasks)
         let liveIDs = Set(projectSections.map(\.id))
         func sectionID(of task: RemitTask) -> String? {
-            guard let id = assignments[task.id], liveIDs.contains(id) else { return nil }
+            guard let id = task.sectionID, liveIDs.contains(id) else { return nil }
             return id
         }
 
@@ -188,7 +184,7 @@ enum TaskGrouping {
         _ tasks: [RemitTask],
         by groupBy: TaskGroupBy,
         projects: [RemitProject],
-        labelsFor: (RemitTask) -> [RemitLabel],
+        labelsFor: (RemitTask) -> [ReminderTag],
         untitled: String
     ) -> [Section] {
         switch groupBy {
@@ -237,7 +233,7 @@ enum TaskGrouping {
             return result
 
         case .label:
-            var byLabel: [String: (RemitLabel, [RemitTask])] = [:]
+            var byLabel: [String: (ReminderTag, [RemitTask])] = [:]
             var unlabelled: [RemitTask] = []
             for task in tasks {
                 let labels = labelsFor(task)
@@ -249,10 +245,10 @@ enum TaskGrouping {
                 }
             }
             var result = byLabel.values
-                .sorted { $0.0.order < $1.0.order }
+                .sorted { $0.0.name.localizedStandardCompare($1.0.name) == .orderedAscending }
                 .map { Section(id: $0.0.id, title: $0.0.name, tasks: $0.1) }
             if !unlabelled.isEmpty {
-                result.append(Section(id: "nolabel", title: "No label", tasks: unlabelled))
+                result.append(Section(id: "nolabel", title: "No tag", tasks: unlabelled))
             }
             return result
         }

@@ -38,7 +38,7 @@ enum TaskGroupBy: String, CaseIterable, Identifiable, Codable {
         case .none: return "None"
         case .dueDate: return "Due date"
         case .priority: return "Priority"
-        case .label: return "Label"
+        case .label: return "Tag"
         case .project: return "Project"
         }
     }
@@ -151,7 +151,7 @@ struct DisplayMenu: View {
     @Binding var deadline: DeadlineFilter
     @Binding var priorityFilter: String
     @Binding var labelFilter: String
-    let labels: [RemitLabel]
+    let labels: [ReminderTag]
     var onReset: () -> Void
     /// Nil where saving isn't meaningful (the Filters & Labels page itself).
     var onSaveFilter: ((String) -> Void)?
@@ -243,7 +243,7 @@ struct DisplayMenu: View {
                     ForEach(Priority.allCases) { Text($0.label).tag(String($0.rawValue)) }
                 }
             }
-            row("Label", changed: labelFilter != "all") {
+            row("Tag", changed: labelFilter != "all") {
                 Picker("", selection: $labelFilter) {
                     Text("All").tag("all")
                     ForEach(labels) { Text($0.name).tag($0.id) }

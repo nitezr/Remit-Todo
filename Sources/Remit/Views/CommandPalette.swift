@@ -110,7 +110,7 @@ struct CommandPalette: View {
             Result(id: "view.today", title: "Today", systemImage: "calendar", action: .view(.today)),
             Result(id: "view.upcoming", title: "Upcoming", systemImage: "calendar.badge.clock", action: .view(.upcoming)),
             Result(id: "view.inbox", title: "Inbox", systemImage: "tray", action: .view(.inbox)),
-            Result(id: "view.labels", title: "Filters & Labels", systemImage: "tag", action: .view(.filtersAndLabels)),
+            Result(id: "view.labels", title: "Filters & Tags", systemImage: "number", action: .view(.filtersAndLabels)),
         ]
         views += projects.map {
             Result(id: "view.\($0.id)", title: $0.title, subtitle: "Project", systemImage: "circle.fill", action: .view(.project($0.id)))

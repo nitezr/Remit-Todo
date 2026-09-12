@@ -7,9 +7,9 @@ enum SidebarSelection: Hashable {
     case inbox
     case today
     case upcoming
-    /// The Filters & Labels management page.
+    /// The Filters & Tags management page.
     case filtersAndLabels
-    /// Every task carrying one label, across all projects.
+    /// Every task carrying one Reminders tag, by name, across all projects.
     case label(String)
     /// A user-defined saved filter (#27).
     case filter(String)
@@ -31,6 +31,8 @@ struct ContentView: View {
     /// the menu command and the split view can't drift out of sync -- the Electron build shipped a
     /// sidebar toggle that was "added" but not wired three separate times (ROADMAP.md #76-#78).
     @AppStorage("sidebar.visible") private var sidebarVisible = true
+    /// Per launch on purpose: the permission is still missing next time, so it should say so again.
+    @State private var fullDiskAccessDismissed = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,6 +41,12 @@ struct ContentView: View {
             // that exists in code but is never actually reachable on screen.
             if let warning = metadataStore.storageWarning {
                 ErrorBanner(message: warning) { metadataStore.storageWarning = nil }
+            }
+            // Without this, missing tags and sections look like lost data rather than a permission.
+            if remindersService.authorizationGranted,
+               remindersService.nativeStatus == .needsFullDiskAccess,
+               !fullDiskAccessDismissed {
+                FullDiskAccessBanner { fullDiskAccessDismissed = true }
             }
             splitView
         }

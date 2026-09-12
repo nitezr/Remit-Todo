@@ -1,42 +1,40 @@
+import AppKit
 import SwiftUI
 
-/// Manage Remit's filters and labels.
+/// Saved filters, and the tags in Apple Reminders.
 ///
-/// Labels are entirely Remit's own. ROADMAP.md #27 assumed they would map to Apple Reminders'
-/// native tags; #32 said to check that against real data before assuming a schema, and the check
-/// settles it -- **EventKit exposes no tags API at all**, on `EKReminder` or `EKCalendarItem`, so
-/// Reminders tags cannot be read or written through the public framework. A Remit-side layer is
-/// not a shortcut here, it is the only option, which is why this page is where labels come from.
+/// The tags are Reminders' own: the same set Reminders.app lists under Tags, read from its store
+/// and changed through ReminderKit, so renaming one here renames it on every device. There is no
+/// "new tag" field because Reminders has no standalone tag -- a tag exists while some reminder
+/// carries it -- so tags are made by adding one to a task (`L`, the detail panel, or `@tag` in
+/// quick add). Colours and folders went for the same reason: Reminders stores neither, and anything
+/// kept only in Remit would stop matching what Reminders shows.
 ///
 /// The Electron build shipped a label section the user could not read (#42), so contrast and
-/// sizing are deliberate: 13pt names, full-strength swatches, and hit targets big enough to click.
+/// sizing are deliberate: 13pt names and hit targets big enough to click.
 struct LabelsPage: View {
     @EnvironmentObject private var metadataStore: MetadataStore
     @EnvironmentObject private var remindersService: RemindersService
     @Binding var selection: SidebarSelection?
 
-    @State private var newLabelName = ""
-    @State private var renamingID: String?
+    @State private var renamingTag: String?
     @State private var draftName = ""
+    @State private var removingTag: String?
     @State private var editingFilter: SavedFilter?
     @State private var creatingFilter = false
-    @State private var newFolderName = ""
-    @State private var addingFolder = false
-    /// Collapsed folder ids, comma-joined -- AppStorage cannot hold a Set and the list is short.
-    @AppStorage("labels.collapsedFolders") private var collapsedFolders = ""
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 filtersSection
-                labelsSection
+                tagsSection
             }
             .padding(22)
             .frame(maxWidth: 720, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(Theme.pageBackground)
-        .navigationTitle("Filters & Labels")
+        .navigationTitle("Filters & Tags")
         .navigationSubtitle(subtitle)
         .sheet(isPresented: $creatingFilter) {
             FilterEditorSheet(existing: nil) { creatingFilter = false }
@@ -44,12 +42,28 @@ struct LabelsPage: View {
         .sheet(item: $editingFilter) { filter in
             FilterEditorSheet(existing: filter) { editingFilter = nil }
         }
+        .confirmationDialog(
+            removingTag.map { "Remove #\($0) from every task?" } ?? "Remove tag?",
+            isPresented: Binding(get: { removingTag != nil }, set: { if !$0 { removingTag = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Remove Tag", role: .destructive) {
+                if let removingTag { remindersService.removeTag(removingTag) }
+                removingTag = nil
+            }
+            Button("Cancel", role: .cancel) { removingTag = nil }
+        } message: {
+            if let removingTag {
+                let count = taskCount(removingTag, includingCompleted: true)
+                Text("The tag comes off \(count) task\(count == 1 ? "" : "s") in Apple Reminders on all your devices. The tasks themselves are kept.")
+            }
+        }
     }
 
     private var subtitle: String {
-        let l = metadataStore.labels.count
+        let t = remindersService.tags.count
         let f = metadataStore.filters.count
-        return "\(f) filter\(f == 1 ? "" : "s") · \(l) label\(l == 1 ? "" : "s")"
+        return "\(f) filter\(f == 1 ? "" : "s") · \(t) tag\(t == 1 ? "" : "s")"
     }
 
     // MARK: - Filters
@@ -63,7 +77,7 @@ struct LabelsPage: View {
                     icon: "line.3.horizontal.decrease.circle",
                     title: "No saved filters",
                     body: """
-                        A filter is a saved set of criteria — a deadline, a priority, a label, a \
+                        A filter is a saved set of criteria — a deadline, a priority, a tag, a \
                         project — that becomes its own view in the sidebar. Create one below, or \
                         save the options you already have set from any view's Display menu.
                         """
@@ -150,9 +164,8 @@ struct LabelsPage: View {
            let priority = Priority(rawValue: raw) {
             parts.append(priority.label)
         }
-        if filter.labelID != "all",
-           let label = metadataStore.labels.first(where: { $0.id == filter.labelID }) {
-            parts.append("@\(label.name)")
+        if filter.labelID != "all" {
+            parts.append("#\(filter.labelID)")
         }
         if let projectID = filter.projectID,
            let project = remindersService.projects.first(where: { $0.id == projectID }) {
@@ -164,245 +177,90 @@ struct LabelsPage: View {
     private func filterCount(_ filter: SavedFilter) -> Int {
         remindersService.tasks.filter { task in
             !task.isCompleted
-                && filter.matches(task, labelIDs: metadataStore.labels(forTask: task.id).map(\.id))
+                && filter.matches(task, labelIDs: task.labels)
         }.count
     }
 
-    // MARK: - Labels
+    // MARK: - Tags
 
-    private var labelsSection: some View {
+    private var tagsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
-                Text("Labels")
-                    .font(Theme.font(15, .semibold))
-                    .foregroundStyle(Theme.primaryText)
-                Text("\(metadataStore.labels.count)")
-                    .font(Theme.font(12))
-                    .foregroundStyle(Theme.secondaryText)
-                    .monospacedDigit()
-                Spacer()
-                Button { addingFolder = true } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "folder.badge.plus").font(.system(size: 11))
-                        Text("New folder").font(Theme.font(12))
-                    }
-                    .foregroundStyle(Theme.secondaryText)
+            sectionHeader("Tags", count: remindersService.tags.count)
+
+            switch remindersService.nativeStatus {
+            case .needsFullDiskAccess:
+                fullDiskAccessState
+            case .unavailable(let message):
+                emptyState(icon: "exclamationmark.triangle", title: "Tags unavailable", body: message)
+            case .unknown, .available:
+                if remindersService.tags.isEmpty {
+                    emptyState(
+                        icon: "number",
+                        title: "No tags yet",
+                        body: """
+                            Tags come from Apple Reminders. Add one to a task with the L key, from its \
+                            detail panel, or by typing @tag in quick add, and it appears here and in \
+                            Reminders.app.
+                            """
+                    )
+                } else {
+                    tagList
                 }
-                .buttonStyle(.plain)
             }
+        }
+    }
 
-            if metadataStore.labels.isEmpty {
-                emptyState(
-                    icon: "tag",
-                    title: "No labels yet",
-                    body: """
-                        Labels live in Remit rather than in Apple Reminders: EventKit exposes no \
-                        API for Reminders tags, so they cannot be read from or written back to it. \
-                        Create one below, then add it to a task with the L key or from the task's \
-                        detail panel.
-                        """
-                )
+    private var tagList: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(remindersService.tags.enumerated()), id: \.element.id) { index, tag in
+                if index > 0 { Divider().overlay(Theme.separator) }
+                row(tag)
             }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10).fill(Theme.cardBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.separator, lineWidth: 1)
+        )
+    }
 
-            VStack(spacing: 0) {
-                if addingFolder { newFolderRow }
-
-                ForEach(metadataStore.labelFolders) { folder in
-                    folderHeader(folder)
-                    if !isCollapsed(folder.id) {
-                        ForEach(metadataStore.labels(inFolder: folder.id)) { label in
-                            Divider().overlay(Theme.separator)
-                            row(label, indented: true)
-                        }
-                    }
-                    Divider().overlay(Theme.separator)
-                }
-
-                // Unfiled labels. Given a header only when folders exist, so it has somewhere to
-                // drag *out* to -- without it a label put in a folder could never leave.
-                if !metadataStore.labelFolders.isEmpty && !metadataStore.labels(inFolder: nil).isEmpty {
-                    unfiledHeader
-                    Divider().overlay(Theme.separator)
-                }
-                ForEach(Array(metadataStore.labels(inFolder: nil).enumerated()), id: \.element.id) { index, label in
-                    if index > 0 { Divider().overlay(Theme.separator) }
-                    row(label, indented: false)
-                }
-
-                if !metadataStore.labels.isEmpty { Divider().overlay(Theme.separator) }
-                newLabelRow
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 10).fill(Theme.cardBackground)
+    private var fullDiskAccessState: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            emptyState(
+                icon: "lock",
+                title: "Remit can't read your Reminders tags yet",
+                body: """
+                    Tags and sections are read straight from Apple Reminders' own database, which \
+                    macOS protects. Add Remit under Privacy & Security › Full Disk Access, then quit \
+                    and reopen Remit.
+                    """
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.separator, lineWidth: 1)
-            )
-        }
-    }
-
-    private func folderHeader(_ folder: LabelFolder) -> some View {
-        HStack(spacing: 8) {
-            Button { toggleCollapsed(folder.id) } label: {
-                Image(systemName: isCollapsed(folder.id) ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Theme.secondaryText)
-                    .frame(width: 12)
-            }
-            .buttonStyle(.plain)
-
-            Image(systemName: "folder")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.secondaryText)
-
-            if renamingID == folder.id {
-                TextField("", text: $draftName)
-                    .textFieldStyle(.plain)
-                    .font(Theme.font(13, .semibold))
-                    .onSubmit {
-                        metadataStore.renameLabelFolder(folder.id, to: draftName)
-                        renamingID = nil
-                    }
-                    .onExitCommand { renamingID = nil }
-            } else {
-                Text(folder.name)
-                    .font(Theme.font(13, .semibold))
-                    .foregroundStyle(Theme.primaryText)
-                Spacer()
-                Text("\(metadataStore.labels(inFolder: folder.id).count)")
-                    .font(Theme.font(12))
-                    .foregroundStyle(Theme.secondaryText)
-                    .monospacedDigit()
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Theme.columnBackground)
-        .contentShape(Rectangle())
-        .dropDestination(for: String.self) { ids, _ in
-            guard let id = ids.first else { return false }
-            metadataStore.setFolder(folder.id, forLabel: id)
-            return true
-        }
-        .contextMenu {
-            Button("Rename Folder") {
-                draftName = folder.name
-                renamingID = folder.id
-            }
-            Button("Move Up") { metadataStore.moveLabelFolder(folder.id, by: -1) }
-            Button("Move Down") { metadataStore.moveLabelFolder(folder.id, by: 1) }
-            // Labels survive their folder; only the grouping goes.
-            Button("Delete Folder", role: .destructive) {
-                metadataStore.removeLabelFolder(folder.id)
+            Button("Open Privacy & Security") {
+                NSWorkspace.shared.open(NativeMetadataStatus.fullDiskAccessSettingsURL)
             }
         }
     }
 
-    private var unfiledHeader: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "tray")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.secondaryText)
-            Text("Unfiled")
-                .font(Theme.font(12, .semibold))
-                .foregroundStyle(Theme.secondaryText)
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(Theme.columnBackground)
-        .contentShape(Rectangle())
-        .dropDestination(for: String.self) { ids, _ in
-            guard let id = ids.first else { return false }
-            metadataStore.setFolder(nil, forLabel: id)
-            return true
-        }
-    }
-
-    private var newFolderRow: some View {
+    private func row(_ tag: ReminderTag) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "folder")
+            Image(systemName: "number")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.secondaryText)
                 .frame(width: 18)
-            TextField("Folder name", text: $newFolderName)
-                .textFieldStyle(.plain)
-                .font(Theme.font(13))
-                .onSubmit(createFolder)
-                .onExitCommand { addingFolder = false; newFolderName = "" }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-    }
 
-    private func createFolder() {
-        let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else {
-            addingFolder = false
-            return
-        }
-        metadataStore.addLabelFolder(name: name)
-        newFolderName = ""
-        addingFolder = false
-    }
-
-    private func isCollapsed(_ id: String) -> Bool {
-        collapsedFolders.split(separator: ",").contains(Substring(id))
-    }
-
-    private func toggleCollapsed(_ id: String) {
-        var ids = collapsedFolders.split(separator: ",").map(String.init)
-        if let index = ids.firstIndex(of: id) { ids.remove(at: index) } else { ids.append(id) }
-        collapsedFolders = ids.joined(separator: ",")
-    }
-
-    private var newLabelRow: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "plus")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.secondaryText)
-                .frame(width: 18)
-            TextField("New label", text: $newLabelName)
-                .textFieldStyle(.plain)
-                .font(Theme.font(13))
-                .onSubmit(createLabel)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-    }
-
-    private func row(_ label: RemitLabel, indented: Bool) -> some View {
-        HStack(spacing: 10) {
-            if indented { Spacer().frame(width: 18) }
-            Menu {
-                ForEach(LabelColor.allCases, id: \.self) { color in
-                    Button {
-                        metadataStore.setColor(color, forLabel: label.id)
-                    } label: {
-                        Label(color.rawValue.capitalized, systemImage: "circle.fill")
-                    }
-                }
-            } label: {
-                Circle()
-                    .fill(label.color.swiftUIColor)
-                    .frame(width: 12, height: 12)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: 18)
-
-            if renamingID == label.id {
+            if renamingTag == tag.name {
                 TextField("", text: $draftName)
                     .textFieldStyle(.plain)
                     .font(Theme.font(13))
-                    .onSubmit { commitRename(label) }
-                    .onExitCommand { renamingID = nil }
+                    .onSubmit { commitRename(tag) }
+                    .onExitCommand { renamingTag = nil }
             } else {
-                Text(label.name)
+                Text(tag.name)
                     .font(Theme.font(13))
                     .foregroundStyle(Theme.primaryText)
                 Spacer()
-                Text("\(taskCount(label))")
+                Text("\(taskCount(tag.name))")
                     .font(Theme.font(12))
                     .foregroundStyle(Theme.secondaryText)
                     .monospacedDigit()
@@ -411,32 +269,14 @@ struct LabelsPage: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .contentShape(Rectangle())
-        .onTapGesture { selection = .label(label.id) }
-        .draggable(label.id)
-        // Dropping one label on another reorders within, or moves into, that label's folder.
-        .dropDestination(for: String.self) { ids, _ in
-            guard let id = ids.first else { return false }
-            metadataStore.moveLabel(id, after: label.id)
-            return true
-        }
+        .onTapGesture { selection = .label(tag.name) }
         .contextMenu {
-            Button("Show Tasks") { selection = .label(label.id) }
-            if !metadataStore.labelFolders.isEmpty {
-                Menu("Move to Folder") {
-                    Button("Unfiled") { metadataStore.setFolder(nil, forLabel: label.id) }
-                    ForEach(metadataStore.labelFolders) { folder in
-                        Button(folder.name) { metadataStore.setFolder(folder.id, forLabel: label.id) }
-                    }
-                }
+            Button("Show Tasks") { selection = .label(tag.name) }
+            Button("Rename…") {
+                draftName = tag.name
+                renamingTag = tag.name
             }
-            Button("Rename") {
-                draftName = label.name
-                renamingID = label.id
-            }
-            // Deleting a label only removes the label; the tasks carrying it are untouched.
-            Button("Delete Label", role: .destructive) {
-                metadataStore.removeLabel(label.id)
-            }
+            Button("Remove from All Tasks…", role: .destructive) { removingTag = tag.name }
         }
     }
 
@@ -475,21 +315,14 @@ struct LabelsPage: View {
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.columnBackground))
     }
 
-    private func taskCount(_ label: RemitLabel) -> Int {
+    private func taskCount(_ name: String, includingCompleted: Bool = false) -> Int {
         remindersService.tasks.filter { task in
-            !task.isCompleted && metadataStore.labels(forTask: task.id).contains { $0.id == label.id }
+            (includingCompleted || !task.isCompleted) && task.labels.contains(name)
         }.count
     }
 
-    private func createLabel() {
-        let name = newLabelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        metadataStore.addLabel(name: name)
-        newLabelName = ""
-    }
-
-    private func commitRename(_ label: RemitLabel) {
-        metadataStore.renameLabel(label.id, to: draftName)
-        renamingID = nil
+    private func commitRename(_ tag: ReminderTag) {
+        remindersService.renameTag(tag.name, to: draftName)
+        renamingTag = nil
     }
 }

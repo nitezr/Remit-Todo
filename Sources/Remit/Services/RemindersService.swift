@@ -1,6 +1,8 @@
 import AppKit
 import EventKit
 import Foundation
+import ReminderKitBridge
+import RemindersNative
 
 enum RemindersServiceError: LocalizedError {
     case projectNotFound
@@ -16,6 +18,28 @@ enum RemindersServiceError: LocalizedError {
     }
 }
 
+/// Whether Reminders' own tags, sections and groups could be read.
+enum NativeMetadataStatus: Equatable {
+    case unknown
+    case available
+    /// macOS is withholding Reminders' store. Reading it needs Full Disk Access, which has no
+    /// permission prompt -- the user has to add Remit in System Settings themselves.
+    case needsFullDiskAccess
+    case unavailable(String)
+
+    init(_ error: RemindersDatabaseError) {
+        switch error {
+        case .fullDiskAccessRequired: self = .needsFullDiskAccess
+        case .storeNotFound: self = .unavailable("No Apple Reminders store was found on this Mac.")
+        case .unreadable(let detail): self = .unavailable("Apple Reminders' store could not be read: \(detail)")
+        }
+    }
+
+    static let fullDiskAccessSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+    )!
+}
+
 /// The only place in Remit that talks to EventKit. Everything above this layer works with
 /// RemitTask/RemitProject value types, never EKReminder/EKCalendar directly.
 ///
@@ -29,6 +53,12 @@ final class RemindersService: ObservableObject {
     @Published private(set) var tasks: [RemitTask] = []
     @Published private(set) var authorizationGranted = false
     @Published var lastError: String?
+    /// Every tag in use in Reminders.
+    @Published private(set) var tags: [ReminderTag] = []
+    /// Project id -> its Reminders sections, in order.
+    @Published private(set) var sectionsByProject: [String: [TaskSection]] = [:]
+    @Published private(set) var groups: [ListGroup] = []
+    @Published private(set) var nativeStatus: NativeMetadataStatus = .unknown
     /// Tasks mid-completion: struck through and fading, but not yet written to EventKit. Views read
     /// this to animate the row out before it disappears (ROADMAP.md #4 -- "no animation... at least
     /// a completion sound and a little animation").
@@ -58,6 +88,8 @@ final class RemindersService: ObservableObject {
 
     private let store = EKEventStore()
     private var changeObserver: NSObjectProtocol?
+    private var activationObserver: NSObjectProtocol?
+    private var storeWatcher: StoreWatcher?
 
     init() {
         authorizationGranted = EKEventStore.authorizationStatus(for: .reminder) == .fullAccess
@@ -70,11 +102,25 @@ final class RemindersService: ObservableObject {
                 await self?.refreshAll()
             }
         }
+        // Coming back to Remit re-reads, so an edit made in Reminders.app while Remit was in the
+        // background is there on return even if nothing else noticed it.
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.refreshAll()
+            }
+        }
     }
 
     deinit {
         if let changeObserver {
             NotificationCenter.default.removeObserver(changeObserver)
+        }
+        if let activationObserver {
+            NotificationCenter.default.removeObserver(activationObserver)
         }
     }
 
@@ -99,10 +145,90 @@ final class RemindersService: ObservableObject {
     func refreshAll() async {
         guard authorizationGranted else { return }
         let calendars = store.calendars(for: .reminder)
-        projects = calendars.map { RemitProject(from: $0) }
+        var fetchedProjects = calendars.map { RemitProject(from: $0) }
+        var fetchedTasks = await fetchReminders(in: calendars).map { RemitTask(from: $0) }
 
-        let fetched = await fetchReminders(in: calendars)
-        tasks = fetched.map { RemitTask(from: $0) }
+        // Off the main actor: this reads the whole of Reminders' store.
+        let native = await Task.detached(priority: .userInitiated) { RemindersDatabase.load() }.value
+        applyNative(native, projects: &fetchedProjects, tasks: &fetchedTasks)
+
+        // Assigned only on change. The store watcher refreshes on every write Reminders makes, and
+        // republishing identical arrays would re-render every view each time.
+        if projects != fetchedProjects { projects = fetchedProjects }
+        if tasks != fetchedTasks { tasks = fetchedTasks }
+    }
+
+    /// Joins Reminders' own tags, sections and groups onto what EventKit returned. EventKit's
+    /// identifiers are ReminderKit's identifiers, so this is a lookup rather than a mapping table.
+    private func applyNative(
+        _ result: Result<RemindersSnapshot, RemindersDatabaseError>,
+        projects: inout [RemitProject],
+        tasks: inout [RemitTask]
+    ) {
+        let snapshot: RemindersSnapshot
+        switch result {
+        case .success(let value):
+            snapshot = value
+            RemitLog.debug(
+                "native read: \(value.tagNames.count) tags on \(value.tagsByReminder.count) reminders, "
+                    + "\(value.sectionsByList.values.reduce(0) { $0 + $1.count }) sections holding "
+                    + "\(value.sectionByReminder.count) reminders, \(value.groups.count) groups"
+            )
+            if nativeStatus != .available { nativeStatus = .available }
+            startWatchingStore()
+        case .failure(let error):
+            RemitLog.debug("native read failed: \(error)")
+            let status = NativeMetadataStatus(error)
+            if nativeStatus != status { nativeStatus = status }
+            if !tags.isEmpty { tags = [] }
+            if !sectionsByProject.isEmpty { sectionsByProject = [:] }
+            if !groups.isEmpty { groups = [] }
+            return
+        }
+
+        let projectIDs = Dictionary(
+            projects.map { ($0.id.uppercased(), $0.id) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        var sections: [String: [TaskSection]] = [:]
+        for (listID, listSections) in snapshot.sectionsByList {
+            guard let projectID = projectIDs[listID] else { continue }
+            sections[projectID] = listSections.map {
+                TaskSection(id: $0.id, projectID: projectID, name: $0.name, sortOrder: $0.order)
+            }
+        }
+
+        for index in projects.indices {
+            projects[index].groupID = snapshot.groupByList[projects[index].id.uppercased()]
+        }
+        for index in tasks.indices {
+            let key = tasks[index].id.uppercased()
+            tasks[index].labels = snapshot.tagsByReminder[key] ?? []
+            // A membership outlives a move to another list; only a section of the task's own list
+            // counts, or a moved task would render under a heading its new list doesn't have.
+            if let sectionID = snapshot.sectionByReminder[key],
+               sections[tasks[index].projectID]?.contains(where: { $0.id == sectionID }) == true {
+                tasks[index].sectionID = sectionID
+            }
+        }
+
+        let newTags = snapshot.tagNames.map(ReminderTag.init(name:))
+        let newGroups = snapshot.groups.map { group in
+            ListGroup(id: group.id, name: group.name, projectIDs: group.listIDs.compactMap { projectIDs[$0] })
+        }
+        if tags != newTags { tags = newTags }
+        if sectionsByProject != sections { sectionsByProject = sections }
+        if groups != newGroups { groups = newGroups }
+    }
+
+    private func startWatchingStore() {
+        guard storeWatcher == nil else { return }
+        storeWatcher = StoreWatcher(directory: RemindersDatabase.storeDirectory) { [weak self] in
+            Task { @MainActor in
+                await self?.refreshAll()
+            }
+        }
     }
 
     private func fetchReminders(in calendars: [EKCalendar]) async -> [EKReminder] {
@@ -112,6 +238,169 @@ final class RemindersService: ObservableObject {
                 continuation.resume(returning: reminders ?? [])
             }
         }
+    }
+
+    // MARK: - Tags, sections and groups
+
+    func sections(forProject projectID: String) -> [TaskSection] {
+        sectionsByProject[projectID] ?? []
+    }
+
+    /// The freshest copy of a task. Views hold RemitTask values, which go stale the moment a write
+    /// lands; anything computing a *new* tag set or section from the old one must start from here.
+    func current(_ task: RemitTask) -> RemitTask {
+        tasks.first { $0.id == task.id } ?? task
+    }
+
+    /// Replaces the task's tags. Creates any tag Reminders doesn't have yet -- in Reminders a tag
+    /// exists because a reminder carries it, so there is nothing to create first.
+    func setTags(_ names: [String], for task: RemitTask) {
+        guard requireNativeRead(to: "change tags") else { return }
+        let cleaned = Self.uniqueTagNames(names)
+        let id = task.id
+        guard current(task).labels != cleaned else { return }
+        patchTask(id) { $0.labels = cleaned }
+        nativeWrite { try RKBridge.setTags(cleaned, forReminder: id) }
+    }
+
+    func setSection(_ sectionID: String?, for task: RemitTask) {
+        guard requireNativeRead(to: "move tasks between sections") else { return }
+        let previous = current(task).sectionID
+        guard previous != sectionID else { return }
+        let id = task.id
+        patchTask(id) { $0.sectionID = sectionID }
+        nativeWrite {
+            try RKBridge.moveReminder(id, toSection: sectionID, leavingSection: previous)
+        }
+    }
+
+    func createSection(named name: String, inProject projectID: String) {
+        createSections(named: [name], inProject: projectID)
+    }
+
+    /// Creates sections one after another in a single write. Each create sends the list's whole
+    /// section order, so two creates racing would each leave the other's section out of it.
+    func createSections(named names: [String], inProject projectID: String) {
+        guard requireNativeRead(to: "add sections") else { return }
+        let cleaned = names
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return }
+        let existing = sections(forProject: projectID).map(\.id)
+        nativeWrite {
+            var ordering = existing
+            for name in cleaned {
+                let created = try RKBridge.createSectionNamed(name, inList: projectID, existingSectionIDs: ordering)
+                ordering.append(created)
+            }
+        }
+    }
+
+    func renameSection(_ section: TaskSection, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != section.name else { return }
+        let id = section.id
+        nativeWrite { try RKBridge.renameSection(id, to: trimmed) }
+    }
+
+    /// Deletes the section in Reminders. Its tasks stay in the list, unsectioned.
+    func deleteSection(_ section: TaskSection) {
+        let id = section.id
+        nativeWrite { try RKBridge.deleteSection(id) }
+    }
+
+    func setGroup(_ groupID: String?, forProject projectID: String) {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }),
+              projects[index].groupID != groupID else { return }
+        projects[index].groupID = groupID
+        nativeWrite { try RKBridge.setGroup(groupID, forList: projectID) }
+    }
+
+    /// Renames a tag everywhere it is used, completed tasks included, which is what renaming a tag
+    /// means in Reminders. Renaming onto an existing tag merges the two.
+    func renameTag(_ oldName: String, to newName: String) {
+        guard requireNativeRead(to: "rename tags") else { return }
+        guard let replacement = Self.uniqueTagNames([newName]).first, replacement != oldName else { return }
+        rewriteTags { names in
+            guard names.contains(oldName) else { return nil }
+            return names.map { $0 == oldName ? replacement : $0 }
+        }
+    }
+
+    /// Takes a tag off every task carrying it. The tasks themselves are untouched.
+    func removeTag(_ name: String) {
+        guard requireNativeRead(to: "remove tags") else { return }
+        rewriteTags { names in
+            guard names.contains(name) else { return nil }
+            return names.filter { $0 != name }
+        }
+    }
+
+    private func rewriteTags(_ transform: ([String]) -> [String]?) {
+        let changes = tasks.compactMap { task -> (String, [String])? in
+            guard let updated = transform(task.labels) else { return nil }
+            return (task.id, Self.uniqueTagNames(updated))
+        }
+        guard !changes.isEmpty else { return }
+        for (id, names) in changes {
+            patchTask(id) { $0.labels = names }
+        }
+        nativeWrite {
+            for (id, names) in changes {
+                try RKBridge.setTags(names, forReminder: id)
+            }
+        }
+    }
+
+    /// Tag and section writes replace whole sets computed from what was last read. Without a read
+    /// that starting point is empty, and writing from it would strip every existing tag or drop
+    /// every section from a list's order -- so these refuse rather than guess.
+    private func requireNativeRead(to action: String) -> Bool {
+        switch nativeStatus {
+        case .available:
+            return true
+        case .needsFullDiskAccess:
+            lastError = "Remit can't \(action) until it has Full Disk Access to read your Reminders tags and sections."
+        case .unavailable(let message):
+            lastError = message
+        case .unknown:
+            lastError = "Remit hasn't finished reading your Reminders tags and sections yet."
+        }
+        return false
+    }
+
+    /// Runs a ReminderKit write off the main thread -- each is an XPC round trip to Reminders'
+    /// daemon -- then re-reads. The re-read settles the optimistic value views already show: it
+    /// sticks if the write landed, and reverts to what Reminders really holds if it didn't.
+    private func nativeWrite(_ work: @escaping @Sendable () throws -> Void) {
+        Task {
+            do {
+                try await Task.detached(priority: .userInitiated) { try work() }.value
+            } catch {
+                RemitLog.debug("native write failed: \(error.localizedDescription)")
+                lastError = error.localizedDescription
+            }
+            await refreshAll()
+        }
+    }
+
+    private func patchTask(_ id: String, _ change: (inout RemitTask) -> Void) {
+        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
+        change(&tasks[index])
+    }
+
+    /// Trimmed, without a typed leading `#`, and de-duplicated case-insensitively -- Reminders
+    /// treats `#Work` and `#work` as one tag.
+    static func uniqueTagNames(_ names: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for raw in names {
+            var name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            while name.hasPrefix("#") { name.removeFirst() }
+            guard !name.isEmpty, seen.insert(name.lowercased()).inserted else { continue }
+            result.append(name)
+        }
+        return result
     }
 
     @discardableResult
@@ -407,7 +696,7 @@ private extension RemitProject {
         emoji = nil
         isFavorite = false
         sortOrder = 0
-        parentID = nil
+        groupID = nil
     }
 
     static func hexString(from cgColor: CGColor) -> String {

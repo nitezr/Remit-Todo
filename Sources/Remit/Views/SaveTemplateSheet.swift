@@ -6,8 +6,12 @@ struct SaveTemplateSheet: View {
     var onDismiss: () -> Void
 
     @EnvironmentObject private var metadataStore: MetadataStore
+    @EnvironmentObject private var remindersService: RemindersService
     @State private var name = ""
-    @State private var includedLabels: Set<String> = []
+
+    private var sections: [TaskSection] {
+        remindersService.sections(forProject: project.id)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -18,9 +22,8 @@ struct SaveTemplateSheet: View {
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(save)
 
-            let sections = metadataStore.sections(forProject: project.id)
             if sections.isEmpty {
-                Text("This project has no sections yet. The template will only carry the labels you pick below.")
+                Text("This project has no sections yet, so the template will be empty.")
                     .font(Theme.taskMeta)
                     .foregroundStyle(Theme.secondaryText)
             } else {
@@ -30,26 +33,6 @@ struct SaveTemplateSheet: View {
                         .foregroundStyle(Theme.secondaryText)
                     ForEach(sections) { section in
                         Text("• \(section.name)").font(Theme.taskNotes)
-                    }
-                }
-            }
-
-            if !metadataStore.labels.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Include labels")
-                        .font(Theme.taskMeta)
-                        .foregroundStyle(Theme.secondaryText)
-                    ForEach(metadataStore.labels) { label in
-                        Toggle(isOn: Binding(
-                            get: { includedLabels.contains(label.name) },
-                            set: { on in
-                                if on { includedLabels.insert(label.name) }
-                                else { includedLabels.remove(label.name) }
-                            }
-                        )) {
-                            Text(label.name).font(Theme.taskNotes)
-                        }
-                        .toggleStyle(.checkbox)
                     }
                 }
             }
@@ -72,11 +55,7 @@ struct SaveTemplateSheet: View {
     }
 
     private func save() {
-        metadataStore.saveTemplate(
-            name: name,
-            fromProject: project.id,
-            labelNames: Array(includedLabels)
-        )
+        metadataStore.saveTemplate(name: name, sectionNames: sections.map(\.name))
         onDismiss()
     }
 }

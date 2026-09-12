@@ -12,7 +12,7 @@ enum RemitFocusTarget: Hashable {
 /// to the window bottom -- the add affordance belongs at the end of the tasks it appends to
 /// (ROADMAP.md #71/#72/#73, where the wrong placement was corrected twice in the Electron build).
 ///
-/// Typing `#` suggests projects and `@` suggests labels (#68, #69, both reported broken in the
+/// Typing `#` suggests projects and `@` suggests Reminders tags (#68, #69, both reported broken in the
 /// Electron build). The suggestion list is driven off the token currently under the cursor-end of
 /// the string, so it appears while typing and disappears the moment the token is completed.
 struct QuickAddView: View {
@@ -20,7 +20,7 @@ struct QuickAddView: View {
     var isFocused: FocusState<RemitFocusTarget?>.Binding
     var focusValue: RemitFocusTarget
     var projects: [RemitProject]
-    var labels: [RemitLabel]
+    var labels: [ReminderTag]
     var onSubmit: () -> Void
 
     @State private var highlighted = 0
@@ -145,7 +145,7 @@ struct QuickAddView: View {
                     guard let rank = Self.rank(label.name, query: token.query) else { return nil }
                     return (rank, Suggestion(
                         id: label.id, name: label.name,
-                        color: label.color.swiftUIColor, trigger: "@"
+                        color: label.color, trigger: "@"
                     ))
                 }
                 .sorted { $0.0 < $1.0 }

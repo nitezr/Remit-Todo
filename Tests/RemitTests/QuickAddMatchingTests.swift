@@ -1,15 +1,15 @@
 import XCTest
 @testable import Remit
 
-/// Real Reminders lists and imported Todoist labels carry leading emoji -- "🤝 Acme",
-/// "🔁Monthly", "⏳waiting". Matching them by raw prefix silently failed: `#acme` offered nothing,
-/// and picking a suggestion wrote a token the parser could not resolve, so the task landed in the
-/// default list instead of the one that was named.
+/// Real Reminders lists and tags carry leading emoji -- "🤝 Acme", "🔁Monthly", "⏳waiting".
+/// Matching them by raw prefix silently failed: `#acme` offered nothing, and picking a suggestion
+/// wrote a token the parser could not resolve, so the task landed in the default list instead of
+/// the one that was named.
 final class QuickAddMatchingTests: XCTestCase {
 
     private func project(_ title: String) -> RemitProject {
         RemitProject(id: title, title: title, colorHex: "#888888",
-                     emoji: nil, isFavorite: false, sortOrder: 0, parentID: nil)
+                     emoji: nil, isFavorite: false, sortOrder: 0, groupID: nil)
     }
 
     // MARK: - Normalisation
@@ -19,7 +19,7 @@ final class QuickAddMatchingTests: XCTestCase {
         XCTAssertEqual(QuickAddParser.normalizeName("🤝 Acme"), expected)
         XCTAssertEqual(QuickAddParser.normalizeName("#🤝Acme"), expected)
         XCTAssertEqual(QuickAddParser.normalizeName("acme"), expected)
-        XCTAssertEqual(QuickAddParser.normalizeName("  Acme  "), expected)
+        XCTAssertEqual(QuickAddParser.normalizeName("  ACME  "), expected)
     }
 
     func testNormalisationKeepsInternalPunctuation() {
@@ -32,17 +32,17 @@ final class QuickAddMatchingTests: XCTestCase {
     func testTypingAPlainNameResolvesAnEmojiPrefixedProject() {
         let projects = [project("🤝 Acme"), project("🎬 Movies")]
 
-        let result = QuickAddParser.parse("Connect with Priya #acme", projects: projects, labels: [])
+        let result = QuickAddParser.parse("Call Priya #acme", projects: projects, labels: [])
 
         XCTAssertEqual(result.projectID, "🤝 Acme")
-        XCTAssertEqual(result.title, "Connect with Priya")
+        XCTAssertEqual(result.title, "Call Priya")
     }
 
     /// What the suggestion list actually inserts: the name with spaces stripped, emoji included.
     func testAcceptingASuggestionResolves() {
         let projects = [project("🤝 Acme"), project("🎬 Movies")]
 
-        let result = QuickAddParser.parse("Connect with Priya #🤝Acme", projects: projects, labels: [])
+        let result = QuickAddParser.parse("Call Priya #🤝Acme", projects: projects, labels: [])
 
         XCTAssertEqual(result.projectID, "🤝 Acme")
     }
@@ -81,7 +81,7 @@ final class QuickAddMatchingTests: XCTestCase {
     }
 
     func testSuggestionRankingPrefersAPrefixMatch() throws {
-        let prefix = try XCTUnwrap(QuickAddView.rank("🤝 Acme", query: "wa"))
+        let prefix = try XCTUnwrap(QuickAddView.rank("🤝 Acme", query: "ac"))
         let substring = try XCTUnwrap(QuickAddView.rank("🔄 Acme <> Orbit", query: "orbit"))
 
         XCTAssertLessThan(prefix, substring, "a name starting with the query should sort first")

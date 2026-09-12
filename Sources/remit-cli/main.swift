@@ -1,5 +1,6 @@
 import EventKit
 import Foundation
+import RemindersNative
 
 /// `remit` — a read/write CLI over the same Apple Reminders data the app uses.
 ///
@@ -11,9 +12,9 @@ import Foundation
 ///
 /// Output is JSON on stdout so callers can parse it; errors go to stderr with a non-zero exit.
 ///
-/// Labels, sections, favourites and nesting are Remit-layer metadata and are read from the same
-/// JSON file the app writes. This tool only ever *reads* that file -- the app owns writing it, so
-/// the two can never fight over it.
+/// Tags and sections are Apple Reminders' own, read from its store the same way the app reads them.
+/// That store needs Full Disk Access for whatever runs this command; without it they are left out
+/// of the output rather than failing the whole call.
 
 // MARK: - Output
 
@@ -79,27 +80,24 @@ func calendar(named name: String) -> EKCalendar? {
         ?? all.first { $0.calendarIdentifier == name }
 }
 
-// MARK: - Remit metadata (read-only)
+// MARK: - Reminders tags and sections (read-only)
 
-struct Metadata: Decodable {
-    struct Label: Decodable { let id: String; let name: String }
-    var labels: [Label] = []
-    var labelAssignments: [String: [String]] = [:]
+/// Read on first use, like the event store, so `remit help` never opens Reminders' database.
+private var _native: RemindersSnapshot??
+var native: RemindersSnapshot? {
+    if let _native { return _native }
+    let loaded = try? RemindersDatabase.load().get()
+    _native = .some(loaded)
+    return loaded
 }
 
-let metadata: Metadata = {
-    let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    let url = support.appendingPathComponent("Remit/metadata.json")
-    guard let data = try? Data(contentsOf: url),
-          let decoded = try? JSONDecoder().decode(Metadata.self, from: data) else {
-        return Metadata()
-    }
-    return decoded
-}()
+func tagNames(forTask id: String) -> [String] {
+    native?.tagsByReminder[id.uppercased()] ?? []
+}
 
-func labelNames(forTask id: String) -> [String] {
-    let ids = metadata.labelAssignments[id] ?? []
-    return ids.compactMap { labelID in metadata.labels.first { $0.id == labelID }?.name }
+func sectionName(forTask id: String, list listID: String?) -> String? {
+    guard let native, let listID, let sectionID = native.sectionByReminder[id.uppercased()] else { return nil }
+    return native.sectionsByList[listID.uppercased()]?.first { $0.id == sectionID }?.name
 }
 
 // MARK: - Serialisation
@@ -113,8 +111,11 @@ func describe(_ reminder: EKReminder) -> [String: Any] {
         "completed": reminder.isCompleted,
         "project": reminder.calendar?.title ?? "",
         "priority": reminder.priority,
-        "labels": labelNames(forTask: reminder.calendarItemIdentifier),
+        "tags": tagNames(forTask: reminder.calendarItemIdentifier),
     ]
+    if let section = sectionName(forTask: reminder.calendarItemIdentifier, list: reminder.calendar?.calendarIdentifier) {
+        payload["section"] = section
+    }
     if let notes = reminder.notes { payload["notes"] = notes }
     if let components = reminder.dueDateComponents,
        let date = Calendar.current.date(from: components) {

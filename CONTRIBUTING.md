@@ -75,8 +75,8 @@ Remit is a *view* over Apple Reminders. It has never stored a task or a list.
 
 | What | Where | Losing it costs you |
 |---|---|---|
-| Tasks, lists, due dates, priorities, tags | Apple Reminders (EventKit) | Nothing Remit can cause — it's Apple's database, synced via iCloud |
-| Sections, labels, saved filters, templates, project emoji, nesting, favourites | `~/Library/Application Support/Remit/metadata.json` | Only the Remit decoration layer |
+| Tasks, lists, due dates, priorities, tags, sections, list groups | Apple Reminders (EventKit, plus ReminderKit for tags, sections and groups) | Nothing Remit can cause — it's Apple's database, synced via iCloud |
+| Saved filters, templates, project emoji, sidebar order, favourites | `~/Library/Application Support/Remit/metadata.json` | Only the Remit presentation layer |
 | Per-view layout, sort, grouping, filters | `UserDefaults` (`com.nitesh.remit`) | View preferences only |
 
 ### Backing up the metadata layer

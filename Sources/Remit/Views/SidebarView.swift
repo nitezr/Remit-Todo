@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Sidebar: fixed views, a Favorites section, and the nested project tree with live task counts.
+/// Sidebar: fixed views, a Favorites section, and the project list with live task counts, grouped
+/// the way Reminders groups it.
 ///
 /// The Electron build needed ~6 rounds of "still not professional enough" here (ROADMAP.md #13,
 /// #22, #40, #43, #45), so spacing, icon weight, and hierarchy are treated as explicit decisions:
@@ -17,7 +18,7 @@ struct SidebarView: View {
     @State private var deleteTarget: RemitProject?
     @EnvironmentObject private var uiState: UIState
     @State private var templateSource: RemitProject?
-    /// Collapsed parents, persisted as a comma-separated id list. AppStorage can't hold a Set
+    /// Collapsed groups, persisted as a comma-separated id list. AppStorage can't hold a Set
     /// directly and the list is short, so a joined string beats a second metadata file.
     @AppStorage("sidebar.collapsedProjects") private var collapsedRaw = ""
 
@@ -27,7 +28,7 @@ struct SidebarView: View {
                 fixedRow(.inbox, title: "Inbox", systemImage: "tray", count: inboxCount)
                 fixedRow(.today, title: "Today", systemImage: "calendar", count: todayCount)
                 fixedRow(.upcoming, title: "Upcoming", systemImage: "calendar.badge.clock", count: upcomingCount)
-                fixedRow(.filtersAndLabels, title: "Filters & Labels", systemImage: "tag", count: nil)
+                fixedRow(.filtersAndLabels, title: "Filters & Tags", systemImage: "number", count: nil)
             }
 
             if !metadataStore.filters.isEmpty {
@@ -54,9 +55,7 @@ struct SidebarView: View {
             if !favorites.isEmpty {
                 Section(isExpanded: $favoritesExpanded) {
                     ForEach(favorites) { project in
-                        // Favorites is a flat pinned list, so no disclosure control here even when
-                        // the project has children in the tree below.
-                        projectRow(project, depth: 0, node: nil)
+                        projectRow(project, depth: 0)
                     }
                 } header: {
                     Text("Favorites").font(Theme.sidebarHeader)
@@ -64,15 +63,21 @@ struct SidebarView: View {
             }
 
             Section(isExpanded: $projectsExpanded) {
-                ForEach(visibleNodes) { node in
-                    projectRow(node.project, depth: node.depth, node: node)
+                ForEach(projectRows) { row in
+                    switch row.kind {
+                    case .group(let group):
+                        groupRow(group)
+                    case .project(let project, let depth):
+                        projectRow(project, depth: depth)
+                    }
                 }
                 .onMove(perform: moveProjects)
             } header: {
+                // Dropping a list on the header takes it out of its Reminders group.
                 Text("My Projects").font(Theme.sidebarHeader)
                     .dropDestination(for: String.self) { ids, _ in
                         guard let draggedID = ids.first else { return false }
-                        metadataStore.setParent(nil, forProject: draggedID)
+                        remindersService.setGroup(nil, forProject: draggedID)
                         return true
                     }
             }
@@ -167,31 +172,45 @@ struct SidebarView: View {
         .tag(target)
     }
 
-    private func projectRow(_ project: RemitProject, depth: Int, node: ProjectNode?) -> some View {
+    /// A Reminders group. Not selectable -- a group holds lists, not tasks -- so a click folds it.
+    private func groupRow(_ group: ListGroup) -> some View {
         HStack(spacing: 6) {
-            // Nesting is drawn with leading padding rather than SwiftUI's DisclosureGroup: a
-            // sub-project has to stay individually selectable, and the whole tree is flattened for
-            // keyboard navigation anyway.
+            Image(systemName: isCollapsed(group.id) ? "chevron.right" : "chevron.down")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 10)
+            Image(systemName: "folder")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.secondaryText)
+                .frame(width: 16)
+            Text(group.name)
+                .font(Theme.sidebarRow)
+                .lineLimit(1)
+            Spacer()
+            let count = group.projectIDs.reduce(0) { $0 + openCount(forProject: $1) }
+            if count > 0 {
+                countBadge(count)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { toggleCollapsed(group.id) }
+        .moveDisabled(true)
+        .dropDestination(for: String.self) { ids, _ in
+            guard let draggedID = ids.first else { return false }
+            remindersService.setGroup(group.id, forProject: draggedID)
+            return true
+        }
+    }
+
+    private func projectRow(_ project: RemitProject, depth: Int) -> some View {
+        HStack(spacing: 6) {
+            // Lists inside a group are indented by padding rather than a DisclosureGroup, so each
+            // stays individually selectable and the rows flatten for keyboard navigation.
             if depth > 0 {
                 Spacer().frame(width: CGFloat(depth) * 14)
             }
-
-            // A fixed-width slot either way, so names stay aligned whether or not a row has kids.
-            Group {
-                if let node, !node.children.isEmpty {
-                    Button {
-                        toggleCollapsed(project.id)
-                    } label: {
-                        Image(systemName: isCollapsed(project.id) ? "chevron.right" : "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    Color.clear
-                }
-            }
-            .frame(width: 10)
+            // Keeps names aligned with group rows, whose chevron sits in this slot.
+            Color.clear.frame(width: 10)
 
             projectIcon(project)
                 .frame(width: 16)
@@ -207,33 +226,32 @@ struct SidebarView: View {
         .tag(SidebarSelection.project(project.id))
         .contextMenu { projectMenu(project) }
         .draggable(project.id)
+        // Dropping one list on another puts it in the same Reminders group.
         .dropDestination(for: String.self) { ids, _ in
             guard let draggedID = ids.first, draggedID != project.id else { return false }
-            // setParent refuses cycles, so dropping a project onto its own descendant is a no-op
-            // rather than a detached subtree.
-            metadataStore.setParent(project.id, forProject: draggedID)
+            remindersService.setGroup(project.groupID, forProject: draggedID)
             return true
         }
     }
 
-    /// Favorites, nesting, and emoji are all Remit-layer metadata with nowhere else to be edited --
-    /// without this menu the data model exists but the user can never set any of it.
+    /// Favorites and emoji are Remit-layer metadata with nowhere else to be edited; the group is
+    /// Reminders' own and changes there too.
     @ViewBuilder
     private func projectMenu(_ project: RemitProject) -> some View {
         Button(metadataStore.isFavorite(project.id) ? "Remove from Favorites" : "Add to Favorites") {
             metadataStore.toggleFavorite(project.id)
         }
 
-        Menu("Move to") {
-            Button("Top level") {
-                metadataStore.setParent(nil, forProject: project.id)
-            }
-            Divider()
-            // Descendants are excluded so a project can't be made a child of its own subtree.
-            let blocked = metadataStore.descendantIDs(of: project.id).union([project.id])
-            ForEach(listedProjects.filter { !blocked.contains($0.id) }) { candidate in
-                Button(candidate.title) {
-                    metadataStore.setParent(candidate.id, forProject: project.id)
+        if !remindersService.groups.isEmpty {
+            Menu("Move to Group") {
+                Button("No Group" + (project.groupID == nil ? " ✓" : "")) {
+                    remindersService.setGroup(nil, forProject: project.id)
+                }
+                Divider()
+                ForEach(remindersService.groups) { group in
+                    Button(group.name + (project.groupID == group.id ? " ✓" : "")) {
+                        remindersService.setGroup(group.id, forProject: project.id)
+                    }
                 }
             }
         }
@@ -251,7 +269,7 @@ struct SidebarView: View {
                 Divider()
                 ForEach(metadataStore.templates) { template in
                     Button("Apply \(template.name)") {
-                        metadataStore.applyTemplate(template, toProject: project.id)
+                        apply(template, to: project)
                     }
                 }
             }
@@ -260,6 +278,16 @@ struct SidebarView: View {
         Divider()
 
         Button("Delete Project...", role: .destructive) { deleteTarget = project }
+    }
+
+    /// Creates the template's sections in Reminders, skipping names the list already has so
+    /// applying twice never duplicates a section.
+    private func apply(_ template: ProjectTemplate, to project: RemitProject) {
+        let existing = Set(remindersService.sections(forProject: project.id).map { $0.name.lowercased() })
+        remindersService.createSections(
+            named: template.sectionNames.filter { !existing.contains($0.lowercased()) },
+            inProject: project.id
+        )
     }
 
     private func deleteProject(_ project: RemitProject) {
@@ -286,32 +314,68 @@ struct SidebarView: View {
 
     // MARK: - Data
 
-    /// Depth-first, skipping anything under a collapsed parent. Collapsing hides the subtree from
-    /// keyboard navigation too, since both walk this same list.
-    private var visibleNodes: [ProjectNode] {
-        var result: [ProjectNode] = []
-        func visit(_ nodes: [ProjectNode]) {
-            for node in nodes {
-                result.append(node)
-                if !isCollapsed(node.project.id) {
-                    visit(node.children)
-                }
+    private struct SidebarRow: Identifiable {
+        enum Kind {
+            case group(ListGroup)
+            case project(RemitProject, depth: Int)
+        }
+
+        let kind: Kind
+
+        var id: String {
+            switch kind {
+            case .group(let group): return "group:\(group.id)"
+            case .project(let project, _): return project.id
             }
         }
-        visit(projectTree)
-        return result
     }
 
-    private func isCollapsed(_ projectID: String) -> Bool {
-        collapsedRaw.split(separator: ",").contains(Substring(projectID))
+    /// Each Reminders group with its lists beneath it, then the lists in no group. Lists inside a
+    /// collapsed group are left out, which takes them out of keyboard navigation too.
+    private var projectRows: [SidebarRow] {
+        let ordered = sortedByProjectOrder(listedProjects)
+        let groupIDs = Set(remindersService.groups.map(\.id))
+        var rows: [SidebarRow] = []
+        for group in remindersService.groups {
+            rows.append(SidebarRow(kind: .group(group)))
+            guard !isCollapsed(group.id) else { continue }
+            rows += ordered
+                .filter { $0.groupID == group.id }
+                .map { SidebarRow(kind: .project($0, depth: 1)) }
+        }
+        rows += ordered
+            .filter { $0.groupID.map { !groupIDs.contains($0) } ?? true }
+            .map { SidebarRow(kind: .project($0, depth: 0)) }
+        return rows
     }
 
-    private func toggleCollapsed(_ projectID: String) {
+    /// Remit's saved order first, then anything never ordered in the order Reminders returned it.
+    private func sortedByProjectOrder(_ projects: [RemitProject]) -> [RemitProject] {
+        let position = Dictionary(
+            metadataStore.projectOrder.enumerated().map { ($0.element, $0.offset) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return projects.enumerated().sorted { lhs, rhs in
+            switch (position[lhs.element.id], position[rhs.element.id]) {
+            case let (left?, right?): return left < right
+            case (.some, .none): return true
+            case (.none, .some): return false
+            case (.none, .none): return lhs.offset < rhs.offset
+            }
+        }
+        .map(\.element)
+    }
+
+    private func isCollapsed(_ groupID: String) -> Bool {
+        collapsedRaw.split(separator: ",").contains(Substring(groupID))
+    }
+
+    private func toggleCollapsed(_ groupID: String) {
         var ids = Set(collapsedRaw.split(separator: ",").map(String.init))
-        if ids.contains(projectID) {
-            ids.remove(projectID)
+        if ids.contains(groupID) {
+            ids.remove(groupID)
         } else {
-            ids.insert(projectID)
+            ids.insert(groupID)
         }
         collapsedRaw = ids.sorted().joined(separator: ",")
     }
@@ -324,42 +388,16 @@ struct SidebarView: View {
         return remindersService.projects.filter { $0.id != inboxID }
     }
 
-    private var projectTree: [ProjectNode] {
-        var parents: [String: String] = [:]
-        for (id, meta) in metadataStore.data.projects {
-            if let parentID = meta.parentID { parents[id] = parentID }
-        }
-        return ProjectTree.build(
-            projects: listedProjects,
-            parents: parents,
-            order: metadataStore.projectOrder
-        )
-    }
-
-    /// Drag-reorder in the sidebar. Dropping next to a project at a different depth also adopts
-    /// that project's parent, so one gesture covers both "move above/below" (#58, #60) and
-    /// re-nesting -- the Electron build shipped nesting without sibling reordering and it was
-    /// reported twice.
+    /// Drag-reorder. The order is Remit's own, so this only reorders. Changing a list's group is
+    /// a drop onto the group or "Move to Group", because that one writes to Reminders.
     private func moveProjects(from source: IndexSet, to destination: Int) {
-        var visible = visibleNodes
-        guard let sourceIndex = source.first, sourceIndex < visible.count else { return }
-        let moved = visible[sourceIndex]
-
-        // The neighbour the dragged row lands next to decides its new parent.
-        let anchorIndex = destination > sourceIndex ? destination - 1 : destination
-        let anchor = visible.indices.contains(anchorIndex) ? visible[anchorIndex] : nil
-        let newParent = anchor.flatMap { $0.id == moved.id ? nil : parentID(of: $0.id) }
-
-        if newParent != parentID(of: moved.id) {
-            metadataStore.setParent(newParent, forProject: moved.id)
+        var rows = projectRows
+        rows.move(fromOffsets: source, toOffset: destination)
+        let ids = rows.compactMap { row -> String? in
+            if case .project(let project, _) = row.kind { return project.id }
+            return nil
         }
-
-        visible.move(fromOffsets: source, toOffset: destination)
-        metadataStore.setProjectOrder(visible.map(\.id))
-    }
-
-    private func parentID(of projectID: String) -> String? {
-        metadataStore.projectMetadata(projectID).parentID
+        metadataStore.setProjectOrder(ids)
     }
 
     private var favorites: [RemitProject] {

@@ -103,7 +103,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .completeTask: return "Complete task"
         case .openDetail: return "Open task detail"
         case .quickAdd: return "Quick add"
-        case .editLabels: return "Edit labels"
+        case .editLabels: return "Edit tags"
         case .priority1: return "Priority 1"
         case .priority2: return "Priority 2"
         case .priority3: return "Priority 3"

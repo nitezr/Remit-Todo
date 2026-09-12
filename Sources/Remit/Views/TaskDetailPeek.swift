@@ -251,25 +251,22 @@ struct TaskDetailPeek: View {
                     .labelsHidden()
                 }
 
-                field("Labels") {
+                field("Tags") {
                     VStack(alignment: .leading, spacing: 6) {
-                        TextField("Search labels", text: $labelQuery)
+                        TextField("Search or add tags", text: $labelQuery)
                             .textFieldStyle(.roundedBorder)
                             .font(Theme.font(11))
+                            .onSubmit(addQueriedTag)
 
                         LabelFlow(labels: filteredLabels, assigned: assignedLabelIDs) { label in
                             toggleLabel(label)
                         }
 
-                        if filteredLabels.isEmpty, !labelQuery.isEmpty {
-                            Button("Create \"\(labelQuery)\"") {
-                                if let created = metadataStore.addLabel(name: labelQuery) {
-                                    toggleLabel(created)
-                                }
-                                labelQuery = ""
-                            }
-                            .buttonStyle(.link)
-                            .font(Theme.font(11))
+                        if !labelQuery.isEmpty,
+                           !filteredLabels.contains(where: { $0.name.caseInsensitiveCompare(labelQuery) == .orderedSame }) {
+                            Button("Add #\(labelQuery)") { addQueriedTag() }
+                                .buttonStyle(.link)
+                                .font(Theme.font(11))
                         }
                     }
                 }
@@ -316,8 +313,8 @@ struct TaskDetailPeek: View {
 
     private var sectionBinding: Binding<String?> {
         Binding(
-            get: { metadataStore.data.tasks[task.id]?.sectionID },
-            set: { metadataStore.setSection($0, forTask: task.id) }
+            get: { remindersService.current(task).sectionID },
+            set: { remindersService.setSection($0, for: task) }
         )
     }
 
@@ -346,26 +343,38 @@ struct TaskDetailPeek: View {
     }
 
     private var projectSections: [TaskSection] {
-        metadataStore.sections(forProject: task.projectID)
+        remindersService.sections(forProject: task.projectID)
     }
 
     private var assignedLabelIDs: Set<String> {
-        Set(metadataStore.labels(forTask: task.id).map(\.id))
+        Set(remindersService.current(task).labels)
     }
 
-    private var filteredLabels: [RemitLabel] {
-        guard !labelQuery.isEmpty else { return metadataStore.labels }
-        return metadataStore.labels.filter { $0.name.localizedCaseInsensitiveContains(labelQuery) }
-    }
-
-    private func toggleLabel(_ label: RemitLabel) {
-        var ids = Array(assignedLabelIDs)
-        if ids.contains(label.id) {
-            ids.removeAll { $0 == label.id }
-        } else {
-            ids.append(label.id)
+    /// Every Reminders tag, plus any on this task the last read hasn't listed yet.
+    private var filteredLabels: [ReminderTag] {
+        var tags = remindersService.tags
+        for name in remindersService.current(task).labels where !tags.contains(where: { $0.name == name }) {
+            tags.append(ReminderTag(name: name))
         }
-        metadataStore.setLabels(ids, forTask: task.id)
+        guard !labelQuery.isEmpty else { return tags }
+        return tags.filter { $0.name.localizedCaseInsensitiveContains(labelQuery) }
+    }
+
+    private func toggleLabel(_ label: ReminderTag) {
+        var names = remindersService.current(task).labels
+        if names.contains(label.name) {
+            names.removeAll { $0 == label.name }
+        } else {
+            names.append(label.name)
+        }
+        remindersService.setTags(names, for: task)
+    }
+
+    private func addQueriedTag() {
+        let name = labelQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        remindersService.setTags(remindersService.current(task).labels + [name], for: task)
+        labelQuery = ""
     }
 
     private func neighbour(_ delta: Int) -> RemitTask? {
@@ -435,31 +444,31 @@ struct TaskDetailPeek: View {
     }
 }
 
-/// Wrapping chip list for labels. SwiftUI has no flow layout before macOS 13's `Layout`, so this
+/// Wrapping chip list for tags. SwiftUI has no flow layout before macOS 13's `Layout`, so this
 /// is a small one -- a plain HStack would clip with this many labels.
 struct LabelFlow: View {
-    let labels: [RemitLabel]
+    let labels: [ReminderTag]
     let assigned: Set<String>
-    var onTap: (RemitLabel) -> Void
+    var onTap: (ReminderTag) -> Void
 
     var body: some View {
         FlowLayout(spacing: 4) {
             ForEach(labels) { label in
                 let isOn = assigned.contains(label.id)
                 HStack(spacing: 3) {
-                    Image(systemName: "tag")
+                    Image(systemName: "number")
                         .font(.system(size: 8))
                     Text(label.name)
                         .font(Theme.font(11))
                 }
-                .foregroundStyle(isOn ? label.color.swiftUIColor : Theme.secondaryText)
+                .foregroundStyle(isOn ? label.color : Theme.secondaryText)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(
-                    Capsule().fill(label.color.swiftUIColor.opacity(isOn ? 0.18 : 0.06))
+                    Capsule().fill(label.color.opacity(isOn ? 0.18 : 0.06))
                 )
                 .overlay(
-                    Capsule().stroke(label.color.swiftUIColor.opacity(isOn ? 0.8 : 0.25), lineWidth: 1)
+                    Capsule().stroke(label.color.opacity(isOn ? 0.8 : 0.25), lineWidth: 1)
                 )
                 .contentShape(Capsule())
                 .onTapGesture { onTap(label) }

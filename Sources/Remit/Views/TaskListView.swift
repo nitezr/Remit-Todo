@@ -79,7 +79,7 @@ struct TaskListView: View {
                     deadline: binding(\.deadline),
                     priorityFilter: binding(\.priorityFilter),
                     labelFilter: binding(\.labelFilter),
-                    labels: metadataStore.labels,
+                    labels: remindersService.tags,
                     onReset: resetDisplay,
                     onSaveFilter: saveCurrentAsFilter
                 )
@@ -114,7 +114,7 @@ struct TaskListView: View {
     /// grouping -- adding a section while grouped by priority would create something invisible.
     private var boardSectionAdder: ((String) -> Void)? {
         guard case .project(let projectID) = selection, groupBy == .default else { return nil }
-        return { name in metadataStore.addSection(name: name, toProject: projectID) }
+        return { name in remindersService.createSection(named: name, inProject: projectID) }
     }
 
     /// This view's own settings. Keyed by `selection`, so each project, label, and fixed view
@@ -167,7 +167,7 @@ struct TaskListView: View {
     /// section change, for a date-based view it's a reschedule.
     private func move(_ task: RemitTask, to section: TaskGrouping.Section) {
         if section.isSectionBucket {
-            metadataStore.setSection(section.sectionID, forTask: task.id)
+            remindersService.setSection(section.sectionID, for: task)
         } else if let date = section.date {
             perform { try remindersService.setDueDate(date, for: task) }
         }
@@ -257,7 +257,7 @@ struct TaskListView: View {
                 isFocused: $focus,
                 focusValue: .quickAdd,
                 projects: remindersService.projects,
-                labels: metadataStore.labels,
+                labels: remindersService.tags,
                 onSubmit: { submitQuickAdd(into: section) }
             )
             .listRowSeparator(.hidden)
@@ -280,8 +280,7 @@ struct TaskListView: View {
         }
     }
 
-    /// Sections are Remit-only, so they need their own creation affordance -- there is nothing in
-    /// Reminders.app that would ever create one.
+    /// Creates a real Reminders section, so it appears under this list in Reminders.app too.
     @ViewBuilder
     private var addSectionRow: some View {
         if addingSection {
@@ -316,18 +315,15 @@ struct TaskListView: View {
     private func sectionMenu(_ section: TaskGrouping.Section) -> some View {
         if let sectionID = section.sectionID,
            let model = projectSections.first(where: { $0.id == sectionID }) {
-            Button("Move Section Up") { metadataStore.moveSection(sectionID, by: -1) }
-            Button("Move Section Down") { metadataStore.moveSection(sectionID, by: 1) }
-            Divider()
             Button("Rename Section") {
                 renamingSection = model
                 newSectionName = model.name
                 addingSection = true
             }
-            // Deleting a section returns its tasks to the unsectioned bucket; it never deletes
-            // the tasks themselves, which live in Reminders.
+            // Deleting a section in Reminders returns its tasks to the unsectioned bucket; it
+            // never deletes the tasks themselves.
             Button("Delete Section", role: .destructive) {
-                metadataStore.removeSection(sectionID)
+                remindersService.deleteSection(model)
             }
         }
     }
@@ -372,7 +368,7 @@ struct TaskListView: View {
             }
         }
 
-        Button("Labels...\(hint(.editLabels))") { labelSheetTask = task }
+        Button("Tags...\(hint(.editLabels))") { labelSheetTask = task }
 
         Divider()
 
@@ -388,10 +384,10 @@ struct TaskListView: View {
 
         if case .project = selection, !projectSections.isEmpty {
             Menu("Move to Section") {
-                Button("(No section)") { metadataStore.setSection(nil, forTask: task.id) }
+                Button("(No section)") { remindersService.setSection(nil, for: task) }
                 Divider()
                 ForEach(projectSections) { section in
-                    Button(section.name) { metadataStore.setSection(section.id, forTask: task.id) }
+                    Button(section.name) { remindersService.setSection(section.id, for: task) }
                 }
             }
         }
@@ -457,8 +453,8 @@ struct TaskListView: View {
         perform { try remindersService.setPriority(priority, for: task) }
     }
 
-    /// Copies the fields Reminders actually stores. Labels and section live in Remit's own layer,
-    /// so they are copied across separately once the new task has an id.
+    /// Copies the fields EventKit stores, then the tags and section -- which EventKit can't write --
+    /// through ReminderKit once the new task has an id.
     private func duplicate(_ task: RemitTask) {
         perform {
             let copy = try remindersService.createTask(
@@ -468,11 +464,8 @@ struct TaskListView: View {
                 priority: task.priority,
                 notes: task.notes
             )
-            let labelIDs = metadataStore.labels(forTask: task.id).map(\.id)
-            if !labelIDs.isEmpty { metadataStore.setLabels(labelIDs, forTask: copy.id) }
-            if let sectionID = metadataStore.sectionID(forTask: task.id) {
-                metadataStore.setSection(sectionID, forTask: copy.id)
-            }
+            if !task.labels.isEmpty { remindersService.setTags(task.labels, for: copy) }
+            if let sectionID = task.sectionID { remindersService.setSection(sectionID, for: copy) }
         }
     }
 
@@ -482,9 +475,9 @@ struct TaskListView: View {
         guard !name.isEmpty else { return cancelSection() }
 
         if let renamingSection {
-            metadataStore.renameSection(renamingSection.id, to: name)
+            remindersService.renameSection(renamingSection, to: name)
         } else {
-            metadataStore.addSection(name: name, toProject: projectID)
+            remindersService.createSection(named: name, inProject: projectID)
         }
         cancelSection()
     }
@@ -510,15 +503,11 @@ struct TaskListView: View {
         case .upcoming:
             let startOfToday = Calendar.current.startOfDay(for: Date())
             return openTasks.filter { ($0.dueDate ?? .distantPast) >= startOfToday || $0.isOverdue }
-        case .label(let labelID):
-            return openTasks.filter { task in
-                metadataStore.labels(forTask: task.id).contains { $0.id == labelID }
-            }
+        case .label(let name):
+            return openTasks.filter { $0.labels.contains(name) }
         case .filter(let filterID):
             guard let filter = metadataStore.filters.first(where: { $0.id == filterID }) else { return [] }
-            return openTasks.filter {
-                filter.matches($0, labelIDs: metadataStore.labels(forTask: $0.id).map(\.id))
-            }
+            return openTasks.filter { filter.matches($0, labelIDs: $0.labels) }
         case .filtersAndLabels:
             return []
         case .project(let id):
@@ -558,11 +547,7 @@ struct TaskListView: View {
         guard passesSleepingHours(task) else { return false }
         guard deadline.matches(task) else { return false }
         if priorityFilter != "all", String(task.priority.rawValue) != priorityFilter { return false }
-        if labelFilter != "all" {
-            guard metadataStore.labels(forTask: task.id).contains(where: { $0.id == labelFilter }) else {
-                return false
-            }
-        }
+        if labelFilter != "all", !task.labels.contains(labelFilter) { return false }
         return true
     }
 
@@ -578,7 +563,7 @@ struct TaskListView: View {
                 applySort(visibleTasks),
                 by: groupBy,
                 projects: remindersService.projects,
-                labelsFor: { metadataStore.labels(forTask: $0.id) },
+                labelsFor: { $0.labels.map(ReminderTag.init(name:)) },
                 untitled: title
             )
         }
@@ -590,8 +575,7 @@ struct TaskListView: View {
         case .project(let id):
             return TaskGrouping.project(
                 visibleTasks,
-                sections: metadataStore.sections(forProject: id),
-                assignments: sectionAssignments,
+                sections: remindersService.sections(forProject: id),
                 untitled: title
             )
         case .inbox, .label, .filter, .filtersAndLabels:
@@ -605,17 +589,9 @@ struct TaskListView: View {
         }
     }
 
-    private var sectionAssignments: [String: String] {
-        var result: [String: String] = [:]
-        for (taskID, meta) in metadataStore.data.tasks {
-            if let sectionID = meta.sectionID { result[taskID] = sectionID }
-        }
-        return result
-    }
-
     private var projectSections: [TaskSection] {
         guard case .project(let id) = selection else { return [] }
-        return metadataStore.sections(forProject: id)
+        return remindersService.sections(forProject: id)
     }
 
     /// The rendered order, flattened. Keyboard navigation walks this so `j` crosses section
@@ -629,9 +605,9 @@ struct TaskListView: View {
         case .inbox: return "Inbox"
         case .today: return "Today"
         case .upcoming: return "Upcoming"
-        case .filtersAndLabels: return "Filters & Labels"
-        case .label(let id):
-            return metadataStore.labels.first(where: { $0.id == id })?.name ?? "Label"
+        case .filtersAndLabels: return "Filters & Tags"
+        case .label(let name):
+            return "#\(name)"
         case .filter(let id):
             return metadataStore.filters.first(where: { $0.id == id })?.name ?? "Filter"
         case .project(let id):
@@ -696,7 +672,7 @@ struct TaskListView: View {
         let parsed = QuickAddParser.parse(
             quickAddText,
             projects: remindersService.projects,
-            labels: metadataStore.labels.map(\.name)
+            labels: remindersService.tags.map(\.name)
         )
         let trimmed = parsed.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -715,9 +691,12 @@ struct TaskListView: View {
                 priority: parsed.priority ?? .p4,
                 recurrence: parsed.recurrence
             )
-            applyLabels(parsed, toTask: task.id)
-            if section.isSectionBucket {
-                metadataStore.setSection(section.sectionID, forTask: task.id)
+            // An `@tag` Reminders doesn't have yet still lands: a Reminders tag comes into being
+            // the moment a reminder carries it, so known and new names are written the same way.
+            let tagNames = parsed.labelNames + parsed.newLabelNames
+            if !tagNames.isEmpty { remindersService.setTags(tagNames, for: task) }
+            if section.isSectionBucket, let sectionID = section.sectionID {
+                remindersService.setSection(sectionID, for: task)
             }
             quickAddText = ""
             // Focus stays in the field so several tasks can be typed in a row.
@@ -725,18 +704,6 @@ struct TaskListView: View {
         } catch {
             remindersService.lastError = error.localizedDescription
         }
-    }
-
-    /// An `@token` naming a label that doesn't exist yet creates it, rather than being dropped.
-    /// The Glaze build discards unknown tokens, but it has a label-management UI to create them in
-    /// first and this build does not yet -- without this, every `@token` would silently do nothing.
-    private func applyLabels(_ parsed: QuickAddResult, toTask taskID: String) {
-        var ids = parsed.labelNames.compactMap { metadataStore.label(named: $0)?.id }
-        for name in parsed.newLabelNames {
-            if let created = metadataStore.addLabel(name: name) { ids.append(created.id) }
-        }
-        guard !ids.isEmpty else { return }
-        metadataStore.setLabels(ids, forTask: taskID)
     }
 
     /// An explicit `#project` token wins; otherwise a project view adds to itself, and the

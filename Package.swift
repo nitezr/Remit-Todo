@@ -17,6 +17,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Remit",
+            dependencies: ["ReminderKitBridge", "RemindersNative"],
             path: "Sources/Remit",
             exclude: ["Supporting/Info.plist"],
             linkerSettings: [
@@ -30,6 +31,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "remit-cli",
+            dependencies: ["RemindersNative"],
             path: "Sources/remit-cli",
             exclude: ["Info.plist"],
             linkerSettings: [
@@ -41,11 +43,24 @@ let package = Package(
                 ])
             ]
         ),
+        // Apple Reminders' own tags, sections and groups, read straight from its store. A library
+        // rather than part of the app so remit-cli reports the same tags the app shows.
+        .target(
+            name: "RemindersNative",
+            path: "Sources/RemindersNative"
+        ),
+        // Writes for the same metadata, through the private ReminderKit framework. Objective-C
+        // because ReminderKit has no Swift interface and its exceptions must be caught in-language.
+        .target(
+            name: "ReminderKitBridge",
+            path: "Sources/ReminderKitBridge",
+            publicHeadersPath: "include"
+        ),
         // Tests link against the app target so the persistence layer is covered by the same code
         // the app actually ships, not a copy of it.
         .testTarget(
             name: "RemitTests",
-            dependencies: ["Remit"],
+            dependencies: ["Remit", "RemindersNative"],
             path: "Tests/RemitTests"
         )
     ]

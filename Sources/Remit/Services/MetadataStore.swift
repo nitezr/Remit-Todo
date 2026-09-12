@@ -1,58 +1,62 @@
 import Foundation
 
-/// Everything Remit tracks that EventKit has nowhere to store: section assignment, project
-/// emoji/color overrides, nesting, favorites, sort order. Persisted as one JSON file in
-/// Application Support. Keys are EKCalendar.calendarIdentifier / EKReminder.calendarItemIdentifier
-/// so this stays a pure decoration layer on top of the real Reminders data -- deleting this file
-/// loses none of the user's actual tasks.
+/// The Remit-only presentation layer: project emoji and colour overrides, sort order, favourites,
+/// saved filters and templates -- things neither EventKit nor Reminders has anywhere to store.
+/// Persisted as one JSON file in Application Support, keyed by EventKit identifiers.
+///
+/// Tags, sections and list groups are deliberately *not* here. They used to be, as a parallel
+/// system Reminders.app could not see; they are now read from and written to Reminders itself
+/// (RemindersService), so there is exactly one set of each and both apps agree on it. Deleting this
+/// file loses presentation choices only -- never a task, a tag or a section.
 struct RemitMetadata: Codable {
     /// Bumped only when a field changes *meaning*. Merely adding a field needs no bump -- that
-    /// case is handled by the tolerant decoder below. 0 means "written before versioning existed".
-    static let currentSchemaVersion = 1
+    /// case is handled by the tolerant decoder below. 0 means "written before versioning existed";
+    /// 2 retired Remit's own labels, sections and nesting in favour of Reminders' native ones.
+    static let currentSchemaVersion = 2
 
     var schemaVersion: Int = RemitMetadata.currentSchemaVersion
     var projects: [String: ProjectMetadata] = [:]
     var tasks: [String: TaskMetadata] = [:]
-    var sections: [TaskSection] = []
     var favoriteProjectIDs: [String] = []
-    var labels: [RemitLabel] = []
-    /// Task identifier -> label ids. Kept separate from `tasks` so a label can be deleted by
-    /// sweeping one dictionary instead of walking every task's metadata.
-    var labelAssignments: [String: [String]] = [:]
     var templates: [ProjectTemplate] = []
     var filters: [SavedFilter] = []
-    var labelFolders: [LabelFolder] = []
 }
 
 extension RemitMetadata {
     enum CodingKeys: String, CodingKey {
-        case schemaVersion, projects, tasks, sections, favoriteProjectIDs
-        case labels, labelAssignments, templates, filters, labelFolders
+        case schemaVersion, projects, tasks, favoriteProjectIDs, templates, filters
     }
 
     /// Decoded field by field with defaults, rather than by the synthesised initialiser, which
     /// throws on the first missing key.
     ///
-    /// That difference is the entire point. This file gains fields as Remit grows -- `labels`,
-    /// `labelAssignments`, `templates` and `filters` all arrived after v0.1 -- and under
-    /// synthesised decoding every one of those additions makes an older file undecodable. Paired
-    /// with a loader that fell back to an empty store, an undecodable file meant the next write
-    /// silently erased every section, label, template, filter and project emoji the user had.
-    /// Decoding tolerantly here, and quarantining rather than overwriting in `MetadataStore.load`,
-    /// are the two halves of making that failure impossible.
+    /// That difference is the entire point. This file gains fields as Remit grows, and under
+    /// synthesised decoding every addition makes an older file undecodable. Paired with a loader
+    /// that fell back to an empty store, an undecodable file meant the next write silently erased
+    /// everything the user had. Decoding tolerantly here, and quarantining rather than overwriting
+    /// in `MetadataStore.load`, are the two halves of making that failure impossible.
+    ///
+    /// Keys this build no longer declares -- schema 1's `labels`, `labelAssignments`,
+    /// `labelFolders`, `sections`, and the `parentID`/`sectionID` fields -- are ignored on read and
+    /// simply not written back. That is how that data is retired: no migration step can half-run.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init()
         schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
         projects = try container.decodeIfPresent([String: ProjectMetadata].self, forKey: .projects) ?? [:]
         tasks = try container.decodeIfPresent([String: TaskMetadata].self, forKey: .tasks) ?? [:]
-        sections = try container.decodeIfPresent([TaskSection].self, forKey: .sections) ?? []
         favoriteProjectIDs = try container.decodeIfPresent([String].self, forKey: .favoriteProjectIDs) ?? []
-        labels = try container.decodeIfPresent([RemitLabel].self, forKey: .labels) ?? []
-        labelAssignments = try container.decodeIfPresent([String: [String]].self, forKey: .labelAssignments) ?? [:]
         templates = try container.decodeIfPresent([ProjectTemplate].self, forKey: .templates) ?? []
         filters = try container.decodeIfPresent([SavedFilter].self, forKey: .filters) ?? []
-        labelFolders = try container.decodeIfPresent([LabelFolder].self, forKey: .labelFolders) ?? []
+
+        // Before schema 2 a filter named its label by a Remit UUID. Those labels are gone, and a
+        // UUID can never equal a Reminders tag name, so the filter would quietly match nothing.
+        // Widening it to any tag keeps the rest of its criteria working.
+        if schemaVersion < 2 {
+            for index in filters.indices where filters[index].labelID != "all" {
+                filters[index].labelID = "all"
+            }
+        }
     }
 }
 
@@ -60,11 +64,9 @@ struct ProjectMetadata: Codable {
     var emoji: String?
     var colorHexOverride: String?
     var sortOrder: Int = 0
-    var parentID: String?
 }
 
 struct TaskMetadata: Codable {
-    var sectionID: String?
     var sortOrder: Int = 0
 }
 
@@ -124,10 +126,10 @@ final class MetadataStore: ObservableObject {
         }
         return (
             RemitMetadata(),
-            "Remit could not read its metadata file and no backup was available, so sections, "
-                + "labels, filters, templates and project emoji have been reset. The unreadable "
-                + "copy was kept as \(quarantine.lastPathComponent). Your Reminders lists and "
-                + "tasks are untouched -- Remit has never stored them."
+            "Remit could not read its metadata file and no backup was available, so favourites, "
+                + "filters, templates and project emoji have been reset. The unreadable "
+                + "copy was kept as \(quarantine.lastPathComponent). Your Reminders lists, "
+                + "tasks, tags and sections are untouched -- Remit has never stored them."
         )
     }
 
@@ -145,6 +147,11 @@ final class MetadataStore: ObservableObject {
     /// Rolls the current good file into the backup slot, then writes atomically, so there is
     /// never a moment with zero readable copies on disk. Reports failure instead of swallowing it.
     private func persist() {
+        // Stamp the version being written, or a migrated file would be migrated again on every
+        // load -- resetting any tag a filter was given since.
+        if data.schemaVersion < RemitMetadata.currentSchemaVersion {
+            data.schemaVersion = RemitMetadata.currentSchemaVersion
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let encoded = try? encoder.encode(data) else {
@@ -161,45 +168,6 @@ final class MetadataStore: ObservableObject {
         } catch {
             storageWarning = "Remit could not save its metadata: \(error.localizedDescription)"
         }
-    }
-
-    /// The section a task belongs to, or nil when it is unsectioned.
-    func sectionID(forTask taskID: String) -> String? {
-        data.tasks[taskID]?.sectionID
-    }
-
-    func setSection(_ sectionID: String?, forTask taskID: String) {
-        var meta = data.tasks[taskID] ?? TaskMetadata()
-        meta.sectionID = sectionID
-        data.tasks[taskID] = meta
-        persist()
-    }
-
-    func addSection(name: String, toProject projectID: String) -> TaskSection {
-        let section = TaskSection(
-            id: UUID().uuidString,
-            projectID: projectID,
-            name: name,
-            sortOrder: data.sections.filter { $0.projectID == projectID }.count
-        )
-        data.sections.append(section)
-        persist()
-        return section
-    }
-
-    func removeSection(_ sectionID: String) {
-        data.sections.removeAll { $0.id == sectionID }
-        for (taskID, var meta) in data.tasks where meta.sectionID == sectionID {
-            meta.sectionID = nil
-            data.tasks[taskID] = meta
-        }
-        persist()
-    }
-
-    func sections(forProject projectID: String) -> [TaskSection] {
-        data.sections
-            .filter { $0.projectID == projectID }
-            .sorted { $0.sortOrder < $1.sortOrder }
     }
 
     func toggleFavorite(_ projectID: String) {
@@ -226,49 +194,12 @@ final class MetadataStore: ObservableObject {
         data.favoriteProjectIDs.contains(projectID)
     }
 
-    /// Setting a project's parent. Rejects anything that would create a cycle -- picking one of
-    /// your own descendants as your parent would otherwise detach that whole branch from the tree.
-    func setParent(_ parentID: String?, forProject projectID: String) {
-        if let parentID {
-            guard parentID != projectID,
-                  !descendantIDs(of: projectID).contains(parentID) else { return }
-        }
-        var meta = data.projects[projectID] ?? ProjectMetadata()
-        meta.parentID = parentID
-        data.projects[projectID] = meta
-        persist()
-    }
-
-    /// Every project below `projectID` in the tree, used to keep the parent picker cycle-free.
-    func descendantIDs(of projectID: String) -> Set<String> {
-        var childrenOf: [String: [String]] = [:]
-        for (id, meta) in data.projects {
-            if let parentID = meta.parentID { childrenOf[parentID, default: []].append(id) }
-        }
-        var result: Set<String> = []
-        var stack = childrenOf[projectID] ?? []
-        while let id = stack.popLast() {
-            guard !result.contains(id) else { continue }
-            result.insert(id)
-            stack.append(contentsOf: childrenOf[id] ?? [])
-        }
-        return result
-    }
-
-    /// Drops every trace of a deleted project. Its children are promoted to top level rather than
-    /// left pointing at a parent that no longer exists, which would silently hide them.
+    /// Drops every trace of a deleted project.
     func forgetProject(_ projectID: String, taskIDs: [String]) {
         data.projects[projectID] = nil
         data.favoriteProjectIDs.removeAll { $0 == projectID }
-        data.sections.removeAll { $0.projectID == projectID }
-
-        for (id, var meta) in data.projects where meta.parentID == projectID {
-            meta.parentID = nil
-            data.projects[id] = meta
-        }
         for taskID in taskIDs {
             data.tasks[taskID] = nil
-            data.labelAssignments[taskID] = nil
         }
         persist()
     }
@@ -290,24 +221,6 @@ final class MetadataStore: ObservableObject {
             .map(\.key)
     }
 
-    /// Moves a section one place within its project. Sections are reordered rather than swapped so
-    /// the stored orders stay dense and comparable.
-    func moveSection(_ sectionID: String, by offset: Int) {
-        guard let section = data.sections.first(where: { $0.id == sectionID }) else { return }
-        var siblings = sections(forProject: section.projectID)
-        guard let index = siblings.firstIndex(where: { $0.id == sectionID }) else { return }
-        let target = index + offset
-        guard target >= 0, target < siblings.count else { return }
-
-        siblings.swapAt(index, target)
-        for (order, sibling) in siblings.enumerated() {
-            if let position = data.sections.firstIndex(where: { $0.id == sibling.id }) {
-                data.sections[position].sortOrder = order
-            }
-        }
-        persist()
-    }
-
     /// Manual task order within a group, used by the "Manual" sort option.
     func setTaskOrder(_ orderedIDs: [String]) {
         for (index, id) in orderedIDs.enumerated() {
@@ -322,46 +235,26 @@ final class MetadataStore: ObservableObject {
         data.tasks[taskID]?.sortOrder ?? Int.max
     }
 
-    func renameSection(_ sectionID: String, to name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let index = data.sections.firstIndex(where: { $0.id == sectionID }) else { return }
-        data.sections[index].name = trimmed
-        persist()
-    }
-
     // MARK: - Templates
 
     var templates: [ProjectTemplate] { data.templates }
 
-    /// Captures a project's structure. Section names only -- see ProjectTemplate for why tasks
-    /// are deliberately not part of a template.
+    /// Captures a project's structure: its section names, which the caller reads from Reminders.
+    /// See ProjectTemplate for why tasks are deliberately not part of a template. Applying one lives
+    /// in RemindersService, because it creates real Reminders sections.
     @discardableResult
-    func saveTemplate(name: String, fromProject projectID: String, labelNames: [String]) -> ProjectTemplate? {
+    func saveTemplate(name: String, sectionNames: [String]) -> ProjectTemplate? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let template = ProjectTemplate(
             id: UUID().uuidString,
             name: trimmed,
-            sectionNames: sections(forProject: projectID).map(\.name),
-            labelNames: labelNames,
+            sectionNames: sectionNames,
             createdAt: Date()
         )
         data.templates.append(template)
         persist()
         return template
-    }
-
-    /// Applies a template's sections to a project, skipping any that already exist by name so
-    /// re-applying is safe rather than duplicating every section.
-    func applyTemplate(_ template: ProjectTemplate, toProject projectID: String) {
-        let existing = Set(sections(forProject: projectID).map { $0.name.lowercased() })
-        for name in template.sectionNames where !existing.contains(name.lowercased()) {
-            addSection(name: name, toProject: projectID)
-        }
-        for labelName in template.labelNames {
-            addLabel(name: labelName)
-        }
     }
 
     func removeTemplate(_ templateID: String) {
@@ -387,158 +280,8 @@ final class MetadataStore: ObservableObject {
         persist()
     }
 
-    // MARK: - Label folders
-
-    var labelFolders: [LabelFolder] {
-        data.labelFolders.sorted { $0.order < $1.order }
-    }
-
-    func labels(inFolder folderID: String?) -> [RemitLabel] {
-        data.labels.filter { $0.folderID == folderID }.sorted { $0.order < $1.order }
-    }
-
-    @discardableResult
-    func addLabelFolder(name: String) -> LabelFolder {
-        let folder = LabelFolder(
-            id: UUID().uuidString,
-            name: name,
-            order: (data.labelFolders.map(\.order).max() ?? -1) + 1
-        )
-        data.labelFolders.append(folder)
-        persist()
-        return folder
-    }
-
-    func renameLabelFolder(_ folderID: String, to name: String) {
-        guard let index = data.labelFolders.firstIndex(where: { $0.id == folderID }) else { return }
-        data.labelFolders[index].name = name
-        persist()
-    }
-
-    /// Deleting a folder never deletes the labels in it -- they become unfiled, and the tasks
-    /// carrying them are untouched. A folder is organisation, not ownership.
-    func removeLabelFolder(_ folderID: String) {
-        data.labelFolders.removeAll { $0.id == folderID }
-        for index in data.labels.indices where data.labels[index].folderID == folderID {
-            data.labels[index].folderID = nil
-        }
-        persist()
-    }
-
-    func setFolder(_ folderID: String?, forLabel labelID: String) {
-        guard let index = data.labels.firstIndex(where: { $0.id == labelID }) else { return }
-        data.labels[index].folderID = folderID
-        // Land at the end of the destination rather than wherever its old order happened to put it.
-        data.labels[index].order = (labels(inFolder: folderID).map(\.order).max() ?? -1) + 1
-        persist()
-    }
-
-    /// Moves `labelID` to sit directly after `targetID`, within the target's folder. Orders are
-    /// renumbered densely afterwards so repeated drags cannot drift into ties.
-    func moveLabel(_ labelID: String, after targetID: String) {
-        guard labelID != targetID,
-              let target = data.labels.first(where: { $0.id == targetID }),
-              let moving = data.labels.firstIndex(where: { $0.id == labelID }) else { return }
-        data.labels[moving].folderID = target.folderID
-
-        var ordered = labels(inFolder: target.folderID).filter { $0.id != labelID }
-        let insertAt = (ordered.firstIndex { $0.id == targetID }.map { $0 + 1 }) ?? ordered.count
-        ordered.insert(data.labels[moving], at: insertAt)
-        for (position, label) in ordered.enumerated() {
-            if let index = data.labels.firstIndex(where: { $0.id == label.id }) {
-                data.labels[index].order = position
-            }
-        }
-        persist()
-    }
-
-    func moveLabelFolder(_ folderID: String, by offset: Int) {
-        var ordered = labelFolders
-        guard let from = ordered.firstIndex(where: { $0.id == folderID }) else { return }
-        let to = min(max(from + offset, 0), ordered.count - 1)
-        guard to != from else { return }
-        let folder = ordered.remove(at: from)
-        ordered.insert(folder, at: to)
-        for (position, f) in ordered.enumerated() {
-            if let index = data.labelFolders.firstIndex(where: { $0.id == f.id }) {
-                data.labelFolders[index].order = position
-            }
-        }
-        persist()
-    }
-
     func removeFilter(_ filterID: String) {
         data.filters.removeAll { $0.id == filterID }
         persist()
-    }
-
-    // MARK: - Labels
-
-    var labels: [RemitLabel] {
-        data.labels.sorted { $0.order < $1.order }
-    }
-
-    @discardableResult
-    func addLabel(name: String, color: LabelColor = .gray) -> RemitLabel? {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        if let existing = label(named: trimmed) { return existing }
-
-        let label = RemitLabel(
-            id: UUID().uuidString,
-            name: trimmed,
-            color: color,
-            order: data.labels.count
-        )
-        data.labels.append(label)
-        persist()
-        return label
-    }
-
-    /// Case- and space-insensitive, matching how `@my label` is typed in quick add.
-    func label(named name: String) -> RemitLabel? {
-        let needle = Self.normalize(name)
-        return data.labels.first { Self.normalize($0.name) == needle }
-    }
-
-    func renameLabel(_ labelID: String, to name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let index = data.labels.firstIndex(where: { $0.id == labelID }) else { return }
-        data.labels[index].name = trimmed
-        persist()
-    }
-
-    func setColor(_ color: LabelColor, forLabel labelID: String) {
-        guard let index = data.labels.firstIndex(where: { $0.id == labelID }) else { return }
-        data.labels[index].color = color
-        persist()
-    }
-
-    /// Removes the label and every assignment referencing it, so no task is left pointing at an id
-    /// that no longer resolves.
-    func removeLabel(_ labelID: String) {
-        data.labels.removeAll { $0.id == labelID }
-        for (taskID, ids) in data.labelAssignments {
-            let kept = ids.filter { $0 != labelID }
-            data.labelAssignments[taskID] = kept.isEmpty ? nil : kept
-        }
-        persist()
-    }
-
-    func setLabels(_ labelIDs: [String], forTask taskID: String) {
-        let valid = Set(data.labels.map(\.id))
-        let kept = labelIDs.filter { valid.contains($0) }
-        data.labelAssignments[taskID] = kept.isEmpty ? nil : kept
-        persist()
-    }
-
-    func labels(forTask taskID: String) -> [RemitLabel] {
-        let ids = data.labelAssignments[taskID] ?? []
-        return ids.compactMap { id in data.labels.first { $0.id == id } }
-    }
-
-    private static func normalize(_ value: String) -> String {
-        value.lowercased().replacingOccurrences(of: " ", with: "")
     }
 }

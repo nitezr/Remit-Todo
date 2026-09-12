@@ -115,8 +115,8 @@ struct TaskRowView: View {
             || (showsProject && project != nil)
     }
 
-    private var labels: [RemitLabel] {
-        metadataStore.labels(forTask: task.id)
+    private var labels: [ReminderTag] {
+        task.labels.map(ReminderTag.init(name:))
     }
 
     private var project: RemitProject? {
@@ -134,17 +134,17 @@ struct TaskRowView: View {
 /// labels still reads title-first -- the Electron build shipped a label UI that was unreadable
 /// (ROADMAP.md #42), so contrast here is a requirement rather than a detail.
 struct LabelChip: View {
-    let label: RemitLabel
+    let label: ReminderTag
 
     var body: some View {
         Text(label.name)
             .font(Theme.taskMeta)
-            .foregroundStyle(label.color.swiftUIColor)
+            .foregroundStyle(label.color)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(label.color.swiftUIColor.opacity(0.15))
+                    .fill(label.color.opacity(0.15))
             )
     }
 }

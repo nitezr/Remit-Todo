@@ -3,7 +3,7 @@ import SwiftUI
 /// Create or edit a saved filter.
 ///
 /// Filters were previously only reachable by setting options in a view's Display menu and choosing
-/// "Save as Filter" -- which meant the Filters & Labels page, the obvious place to look, had no way
+/// "Save as Filter" -- which meant the Filters & Tags page, the obvious place to look, had no way
 /// to make one. Worse, that route is disabled until a criterion is set, so the affordance is
 /// invisible exactly when you have nothing yet and most need it.
 ///
@@ -41,7 +41,7 @@ struct FilterEditorSheet: View {
     private var matchCount: Int {
         remindersService.tasks.filter { task in
             !task.isCompleted
-                && draft.matches(task, labelIDs: metadataStore.labels(forTask: task.id).map(\.id))
+                && draft.matches(task, labelIDs: task.labels)
         }.count
     }
 
@@ -76,9 +76,9 @@ struct FilterEditorSheet: View {
                         ForEach(Priority.allCases) { Text($0.label).tag(String($0.rawValue)) }
                     }
 
-                    Picker("Label", selection: $labelID) {
+                    Picker("Tag", selection: $labelID) {
                         Text("Any").tag("all")
-                        ForEach(metadataStore.labels) { Text($0.name).tag($0.id) }
+                        ForEach(remindersService.tags) { Text($0.name).tag($0.id) }
                     }
 
                     Picker("Project", selection: $projectID) {

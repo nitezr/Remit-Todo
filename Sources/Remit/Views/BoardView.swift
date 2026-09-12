@@ -340,7 +340,7 @@ struct TaskCard: View {
                                 Text(label.name)
                                     .font(Theme.taskMeta)
                             }
-                            .foregroundStyle(label.color.swiftUIColor)
+                            .foregroundStyle(label.color)
                         }
                         Spacer(minLength: 0)
                     }
@@ -380,8 +380,8 @@ struct TaskCard: View {
         .animation(.easeOut(duration: 0.3), value: isCompleting)
     }
 
-    private var labels: [RemitLabel] {
-        metadataStore.labels(forTask: task.id)
+    private var labels: [ReminderTag] {
+        task.labels.map(ReminderTag.init(name:))
     }
 
     private var hasBadgeRow: Bool {

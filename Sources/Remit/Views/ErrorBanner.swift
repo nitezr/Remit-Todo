@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Failures used to be written to `RemindersService.lastError` and rendered nowhere except the
@@ -15,6 +16,38 @@ struct ErrorBanner: View {
                 .font(Theme.font(11))
                 .lineLimit(3)
             Spacer()
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.orange.opacity(0.12))
+    }
+}
+
+/// Shown while macOS withholds Apple Reminders' store from Remit. Tags and sections are read from
+/// that store, and Full Disk Access has no permission prompt of its own -- this is the only place
+/// the user learns what to grant.
+struct FullDiskAccessBanner: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "lock.fill")
+                .foregroundStyle(.orange)
+            Text("Tags and sections need Full Disk Access. Add Remit in Privacy & Security, then reopen Remit.")
+                .font(Theme.font(11))
+                .lineLimit(2)
+            Spacer()
+            Button("Open Settings") {
+                NSWorkspace.shared.open(NativeMetadataStatus.fullDiskAccessSettingsURL)
+            }
+            .font(Theme.font(11))
             Button {
                 onDismiss()
             } label: {

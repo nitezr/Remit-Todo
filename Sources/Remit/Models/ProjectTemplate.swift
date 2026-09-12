@@ -1,15 +1,16 @@
 import Foundation
 
-/// A saved project skeleton: its section names, and the labels it habitually uses.
+/// A saved project skeleton: its section names.
 ///
 /// Local save/apply only -- sharing templates with other people is explicitly out of scope for v1
 /// (ROADMAP.md "Explicitly out of scope"). Tasks are never captured; a template is structure, not
-/// content, so applying one to a busy project can't duplicate or overwrite work.
+/// content, so applying one to a busy project can't duplicate or overwrite work. Applying creates
+/// real Reminders sections. Templates saved before tags moved into Reminders also listed labels;
+/// that key is ignored on load, since a Reminders tag cannot exist without a task carrying it.
 struct ProjectTemplate: Identifiable, Codable, Hashable {
     let id: String
     var name: String
     var sectionNames: [String]
-    var labelNames: [String]
     var createdAt: Date
 }
 
@@ -21,7 +22,7 @@ struct SavedFilter: Identifiable, Codable, Hashable {
     var deadline: DeadlineFilter
     /// Raw value of a Priority, or "all".
     var priority: String
-    /// A label id, or "all".
+    /// A Reminders tag name, or "all".
     var labelID: String
     /// Restrict to one project, or nil for everywhere.
     var projectID: String?
