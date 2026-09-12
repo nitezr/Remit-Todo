@@ -8,7 +8,7 @@ sections and list groups**: those are Reminders' own, read and written in place 
 copied into a Remit-side system. What Remit adds is the interface: views, filters, templates,
 and a full keyboard-driven workflow.
 
-## Status: v0.2, running
+## Status: v0.3, running
 
 A ground-up SwiftUI rewrite, replacing an earlier version built on Raycast's Glaze/Electron
 toolchain (see `ROADMAP.md` for the full feature backlog carried over from that build's 79
@@ -103,7 +103,7 @@ Download the DMG from [Releases](https://github.com/niteshrathore/Remit-Todo/rel
 it, and drag Remit to Applications. Or build one yourself:
 
 ```
-./release.sh 0.2.0 --install
+./release.sh 0.3.0 --install
 ```
 
 **Ad-hoc signed, not notarized.** A DMG you build runs fine on the machine that built it. One
@@ -113,6 +113,16 @@ Apple Developer ID; `release.sh` switches to a hardened-runtime Developer ID sig
 automatically once one is present. See `CONTRIBUTING.md`.
 
 Still to come: notarization, and Sparkle for in-app auto-updates.
+
+### Uninstall
+
+```
+./uninstall.sh
+```
+
+Quits Remit, moves the app, its settings file and its preferences to the Trash, and resets its
+Reminders and Full Disk Access permissions, so the next install starts from the welcome tour again.
+Your tasks, lists, tags and sections live in Apple Reminders and are not touched.
 
 ## Your data
 
@@ -136,3 +146,7 @@ invalidate an older file. `CONTRIBUTING.md` has the details and the backup comma
 `./run.sh` to build and launch, `swift test` for the suite, `git tag vX.Y.Z && git push --tags`
 to cut a release. CI builds and tests every push and smoke-tests the DMG. See
 `CONTRIBUTING.md`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
