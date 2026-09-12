@@ -1,4 +1,4 @@
-<img src="docs/images/icon.png" alt="" width="96" align="left">
+<img src="docs/images/icon.png" width="128" alt="Remit app icon">
 
 # Remit
 
@@ -82,7 +82,7 @@ Every everyday action is a single key, and every key can be changed in Settings.
 | --- | --- | --- | --- |
 | `Q` or `A` | Quick add | `T` | Due today |
 | `E` | Complete | `U` or `M` | Due tomorrow |
-| `J` / `K` or `↓` / `↑` | Next / previous task | `W` | Due this weekend |
+| `J` / `K` or `↓` / `↑` | Next / previous task | `W` | Due next Saturday |
 | `I` or Return | Open details | `N` | Due next week |
 | `L` | Edit tags | `0` | Remove the due date |
 | `1` – `4` | Priority | `⌘K` | Jump to any list or task |

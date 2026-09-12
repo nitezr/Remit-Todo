@@ -27,6 +27,9 @@ cp Sources/Remit/Supporting/Info.plist "$APP/Contents/Info.plist"
 # a demo identifier also keeps the demo's preferences apart from the user's.
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.nitesh.remit.demo" "$APP/Contents/Info.plist"
 cp "$BIN_DIR/Remit" "$APP/Contents/MacOS/Remit"
+mkdir -p "$APP/Contents/Resources"
+# Drawn by scripts/make-icon.sh; rerun it after changing scripts/icon.swift.
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 EXE_PATTERN="$PWD/$APP/Contents/MacOS/Remit"
 

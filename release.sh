@@ -35,6 +35,9 @@ rm -rf "$STAGING"
 mkdir -p "$APP/Contents/MacOS" "$DIST"
 cp Sources/Remit/Supporting/Info.plist "$APP/Contents/Info.plist"
 cp .build/release/Remit "$APP/Contents/MacOS/Remit"
+mkdir -p "$APP/Contents/Resources"
+# Drawn by scripts/make-icon.sh; rerun it after changing scripts/icon.swift.
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # Stamp the real version rather than shipping the placeholder from the source plist. CFBundleVersion
 # must increase monotonically for Sparkle and for macOS's own "newer version installed" checks, so

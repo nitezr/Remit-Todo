@@ -46,4 +46,5 @@ jobs:
           hdiutil attach dist/Remit-0.0.0-ci.dmg -nobrowse -readonly -mountpoint /tmp/remit-dmg
           test -d /tmp/remit-dmg/Remit.app
           test -x /tmp/remit-dmg/Remit.app/Contents/MacOS/Remit
+          test -f /tmp/remit-dmg/Remit.app/Contents/Resources/AppIcon.icns
           hdiutil detach /tmp/remit-dmg

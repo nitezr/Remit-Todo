@@ -14,6 +14,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp Sources/Remit/Supporting/Info.plist "$APP/Contents/Info.plist"
 cp .build/debug/Remit "$APP/Contents/MacOS/Remit"
+mkdir -p "$APP/Contents/Resources"
+# Drawn by scripts/make-icon.sh; rerun it after changing scripts/icon.swift.
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # Prefer the stable local identity if ./setup-signing.sh has been run: an ad-hoc signature
 # changes with every code change, and macOS revokes the Reminders grant when it does.
 SIGN_ID="-"
